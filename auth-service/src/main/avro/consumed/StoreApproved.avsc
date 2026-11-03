@@ -1,0 +1,14 @@
+{
+  "type": "record",
+  "name": "StoreApproved",
+  "namespace": "com.grocery.events.store",
+  "doc": "COPY of store-service's schema (store-service owns it). An admin approved a store. Topic: grocery.store.events, key = storeId.",
+  "fields": [
+    { "name": "eventId",          "type": "string", "doc": "Unique id of this event (UUID). Consumers use it to skip duplicates." },
+    { "name": "occurredAt",       "type": { "type": "long", "logicalType": "timestamp-millis" } },
+    { "name": "storeId",          "type": "long" },
+    { "name": "ownerUserId",      "type": "long", "doc": "The vendor (auth-service user id) who owns the store" },
+    { "name": "storeName",        "type": "string" },
+    { "name": "approvedByUserId", "type": "long", "doc": "The admin who approved it" }
+  ]
+}

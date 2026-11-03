@@ -1,0 +1,83 @@
+# product-read-service: the running pods (Deployment). service.yaml gives them a stable name inside the cluster:
+# http://product-read-service
+# How many: hpa.yaml (3 to 5, by CPU). pdb.yaml keeps at least 2 running while a node is emptied.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product-read-service
+  namespace: grocery
+  labels:
+    app: product-read-service
+    app.kubernetes.io/part-of: grocery
+spec:
+  # no "replicas" here: hpa.yaml decides (3 to 5)
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1                        # a new version first starts one extra pod ...
+      maxUnavailable: 0                  # ... and an old pod stops only when a new one is ready: no downtime
+  selector:
+    matchLabels:
+      app: product-read-service
+  template:
+    metadata:
+      labels:
+        app: product-read-service
+        app.kubernetes.io/part-of: grocery
+      annotations:                       # a Prometheus in the cluster finds the metrics through these
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /actuator/prometheus
+        prometheus.io/port: "8080"
+    spec:
+      automountServiceAccountToken: false  # the app never calls the Kubernetes API, so it gets no token
+      terminationGracePeriodSeconds: 45    # preStop (10 s) + Spring Boot's graceful shutdown (up to 30 s)
+      topologySpreadConstraints:         # spread the replicas over the worker nodes: one node down != all replicas down
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: product-read-service
+      containers:
+        - name: product-read-service
+          image: grocery/product-read-service:0.0.1
+          imagePullPolicy: IfNotPresent      # images are built locally and loaded into the cluster
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: grocery-config         # shared: profile, MySQL host, Kafka, Schema Registry, Redis, tracing ...
+          resources:
+            requests:
+              cpu: 250m                      # the autoscaler's 70 % target counts against this
+              memory: 384Mi
+            limits:
+              cpu: "1"                       # at most one CPU core
+              memory: 640Mi                  # the JVM uses 75 % of it as heap (-XX:MaxRAMPercentage=75 in the Dockerfile)
+          # Spring Boot's health groups (management.endpoint.health.probes.enabled=true)
+          startupProbe:                      # up to 5 minutes to start (Flyway, Kafka; many pods start at once)
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3                # each check may take 3 s (the default 1 s is too short for a busy JVM)
+            failureThreshold: 60
+          livenessProbe:                     # stuck? -> restart the container
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5                # a slow answer (GC pause, busy node) is not "stuck": restart only after 3 x 10 s
+            failureThreshold: 3
+          readinessProbe:                    # not ready (starting, shutting down)? -> no traffic from the Service
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 10                  # on "stop", keep serving 10 s while the Service and the Gateway drop this pod

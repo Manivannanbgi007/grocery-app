@@ -1,0 +1,17 @@
+# cart-service: a stable name inside the cluster for the pods of deployment.yaml:
+# http://cart-service (port 80 -> the pods' port 8080). Kubernetes sends each connection to a ready pod.
+apiVersion: v1
+kind: Service
+metadata:
+  name: cart-service
+  namespace: grocery
+  labels:
+    app: cart-service
+    app.kubernetes.io/part-of: grocery
+spec:
+  selector:
+    app: cart-service
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

@@ -1,0 +1,23 @@
+# Network rule: only mcp-client-service pods may open connections to mcp-server-service (a second lock next to the
+# API key). Enforced only when the cluster's network plugin supports NetworkPolicy (Calico, Cilium, recent kind ...);
+# kubelet health probes are not affected.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mcp-server-service
+  namespace: grocery
+  labels:
+    app.kubernetes.io/part-of: grocery
+spec:
+  podSelector:
+    matchLabels:
+      app: mcp-server-service
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: mcp-client-service
+      ports:
+        - port: http

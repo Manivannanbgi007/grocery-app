@@ -1,0 +1,42 @@
+{
+  "type": "record",
+  "name": "PaymentConfirmed",
+  "namespace": "com.grocery.events.payment",
+  "doc": "The payment is settled: paid online, or cash on delivery accepted. order-service confirms the order. Producer: payment-service. Topic: grocery.payment.events, key = orderId.",
+  "fields": [
+    {
+      "name": "eventId",
+      "type": "string",
+      "doc": "Unique id of this event (UUID). Consumers use it to skip duplicates."
+    },
+    {
+      "name": "occurredAt",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      }
+    },
+    {
+      "name": "paymentId",
+      "type": "long"
+    },
+    {
+      "name": "orderId",
+      "type": "long"
+    },
+    {
+      "name": "customerUserId",
+      "type": "long"
+    },
+    {
+      "name": "amount",
+      "type": "string",
+      "doc": "Amount as decimal text, e.g. \"201.00\" (exact, readable in Kafka UI)"
+    },
+    {
+      "name": "paymentMethod",
+      "type": "string",
+      "doc": "COD or ONLINE"
+    }
+  ]
+}

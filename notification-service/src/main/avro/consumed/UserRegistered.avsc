@@ -1,0 +1,15 @@
+{
+  "type": "record",
+  "name": "UserRegistered",
+  "namespace": "com.grocery.events.user",
+  "doc": "A person registered as CUSTOMER, VENDOR or DELIVERY_PARTNER. Producer: auth-service. Topic: grocery.user.events, key = userId.",
+  "fields": [
+    { "name": "eventId",    "type": "string", "doc": "Unique id of this event (UUID). Consumers use it to skip duplicates." },
+    { "name": "occurredAt", "type": { "type": "long", "logicalType": "timestamp-millis" } },
+    { "name": "userId",     "type": "long" },
+    { "name": "fullName",   "type": "string" },
+    { "name": "email",      "type": "string" },
+    { "name": "phone",      "type": "string" },
+    { "name": "role",       "type": "string", "doc": "CUSTOMER, VENDOR or DELIVERY_PARTNER" }
+  ]
+}

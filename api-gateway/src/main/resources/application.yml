@@ -1,0 +1,489 @@
+# =====================================================================
+# api-gateway configuration
+#
+# The single entry point for all clients: http://localhost:8080
+# Every environment-specific value uses ${ENV_VARIABLE:local-default}.
+# =====================================================================
+
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+
+spring:
+  application:
+    name: api-gateway
+  profiles:
+    default: local        # on your machine (IDE, mvnw): application-local.yml; the Docker image runs with "prod"
+  # Reactive code switches threads, so the MDC (trace id, correlation id) would be empty in most log lines.
+  # "auto" makes Reactor restore it on every thread (CorrelationIdContextConfig registers the correlation id).
+  reactor:
+    context-propagation: auto
+
+  data:
+    redis:                         # stores the rate-limit counters
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      username: ${REDIS_USERNAME:gateway}   # a Redis user that may only use the rate-limit keys (docker-compose.yml)
+      password: ${REDIS_PASSWORD:gateway_pass}
+      timeout: 500ms               # a Redis command that takes longer fails; the rate limiter then lets the request through
+      connect-timeout: 1s          # (RedisClientConfig: no waiting at all while the connection is down)
+
+  cloud:
+    circuitbreaker:
+      resilience4j:
+        # Resilience4j's own timeout (default 1 s!) is off: the httpclient timeouts below are the only ones,
+        # so a slow route (the AI chat, 180 s) is never cut off by a second, shorter timeout.
+        disable-time-limiter: true
+    gateway:
+      server:
+        webflux:
+          # TIMEOUTS: the only timeouts of a call to a service (Resilience4j's time limiter is switched off below).
+          # A route can wait longer with "metadata: response-timeout: <ms>" (see mcp-client-service-chat).
+          httpclient:
+            connect-timeout: ${GATEWAY_CONNECT_TIMEOUT_MS:2000}   # ms to open a connection; the service down -> fails fast
+            response-timeout: ${GATEWAY_RESPONSE_TIMEOUT:10s}    # longest we wait for the answer -> 504
+
+          # Filters applied to EVERY route, in this order (docs/resilience.md "API gateway"):
+          #   1. CircuitBreaker: one circuit breaker + bulkhead per route (named after the route id), configured under
+          #      resilience4j.* below. No fallbackUri: errors go to GlobalErrorHandler, the one place that answers them.
+          #   2. Retry: INSIDE the circuit breaker, so one client request counts once, and an open circuit is never retried.
+          # (Rate limiting runs before both, in RateLimitFilter; its limits are under app.rate-limit.)
+          default-filters:
+            - name: CircuitBreaker
+            - name: Retry
+              args:
+                retries: ${GATEWAY_RETRIES:2}         # at most 2 more attempts
+                methods: GET, HEAD                    # only reads: repeating a POST could place an order twice
+                series: ""                            # NOT "every 5xx": a 500 is a bug, repeating it does not help
+                statuses: BAD_GATEWAY, SERVICE_UNAVAILABLE
+                exceptions: java.io.IOException       # connection refused / reset; NOT timeouts (would multiply the wait)
+                backoff:
+                  firstBackoff: 100ms                 # wait 100 ms, then 200 ms
+                  maxBackoff: 500ms
+                  factor: 2
+                  basedOnPreviousValue: false
+
+          # ROUTES: which path goes to which service.
+          # Access rules (who may call a path) live in SecurityConfig, not here.
+          routes:
+            # ---------- auth-service ----------
+            - id: auth-service
+              uri: ${AUTH_SERVICE_URL:http://localhost:8101}
+              predicates:
+                - Path=/api/v1/auth/**,/api/v1/admin/users/**,/api/v1/super-admin/admins/**,/api/v1/super-admin/users/**
+
+            - id: auth-service-api-docs          # feeds the central Swagger UI
+              uri: ${AUTH_SERVICE_URL:http://localhost:8101}
+              predicates:
+                - Path=/auth-service/v3/api-docs
+              filters:
+                - SetPath=/v3/api-docs
+
+            # ---------- customer-service ----------
+            - id: customer-service
+              uri: ${CUSTOMER_SERVICE_URL:http://localhost:8102}
+              predicates:
+                - Path=/api/v1/customers/**,/api/v1/admin/customers/**
+
+            - id: customer-service-api-docs
+              uri: ${CUSTOMER_SERVICE_URL:http://localhost:8102}
+              predicates:
+                - Path=/customer-service/v3/api-docs
+              filters:
+                - SetPath=/v3/api-docs
+
+            # ---------- store-service ----------
+            - id: store-service
+              uri: ${STORE_SERVICE_URL:http://localhost:8103}
+              predicates:
+                - Path=/api/v1/stores/**,/api/v1/vendor/store/**,/api/v1/admin/stores/**,/api/v1/super-admin/stores/**
+
+            - id: store-service-api-docs
+              uri: ${STORE_SERVICE_URL:http://localhost:8103}
+              predicates:
+                - Path=/store-service/v3/api-docs
+              filters:
+                - SetPath=/v3/api-docs
+
+            # ---------- catalog: CQRS - reads and writes go to DIFFERENT services ----------
+            - id: product-reviews               # reviews live in product-service (MySQL), also for GET;
+              uri: ${PRODUCT_SERVICE_URL:http://localhost:8104}   # listed BEFORE product-read-service's /api/v1/products/**
+              predicates:
+                - Path=/api/v1/products/*/reviews,/api/v1/vendor/reviews/**,/api/v1/admin/reviews/**
+
+            - id: product-read-service          # every GET: answered from Elasticsearch
+              uri: ${PRODUCT_READ_SERVICE_URL:http://localhost:8105}
+              predicates:
+                - Path=/api/v1/products/**,/api/v1/categories/**,/api/v1/vendor/products/**,/api/v1/admin/products/**,/api/v1/admin/categories/**
+                - Method=GET
+
+            - id: product-service               # every change: saved in MySQL (Debezium then updates Elasticsearch)
+              uri: ${PRODUCT_SERVICE_URL:http://localhost:8104}
+              predicates:
+                - Path=/api/v1/vendor/products/**,/api/v1/admin/products/**,/api/v1/admin/categories/**
+                - Method=POST,PUT,PATCH,DELETE
+
+            - id: product-images                # uploaded product images
+              uri: ${PRODUCT_SERVICE_URL:http://localhost:8104}
+              predicates:
+                - Path=/media/**
+                - Method=GET
+
+            - id: product-service-api-docs
+              uri: ${PRODUCT_SERVICE_URL:http://localhost:8104}
+              predicates:
+                - Path=/product-service/v3/api-docs
+              filters:
+                - SetPath=/v3/api-docs
+
+            - id: product-read-service-api-docs
+              uri: ${PRODUCT_READ_SERVICE_URL:http://localhost:8105}
+              predicates:
+                - Path=/product-read-service/v3/api-docs
+              filters:
+                - SetPath=/v3/api-docs
+
+            # ---------- inventory-service ----------
+            - id: inventory-service
+              uri: ${INVENTORY_SERVICE_URL:http://localhost:8106}
+              predicates:
+                - Path=/api/v1/vendor/inventory/**,/api/v1/admin/inventory/**
+
+            - id: inventory-service-api-docs
+              uri: ${INVENTORY_SERVICE_URL:http://localhost:8106}
+              predicates:
+                - Path=/inventory-service/v3/api-docs
+              filters:
+                - SetPath=/v3/api-docs
+
+            # ---------- cart-service ----------
+            - id: cart-service
+              uri: ${CART_SERVICE_URL:http://localhost:8107}
+              predicates:
+                - Path=/api/v1/cart/**,/api/v1/coupons/**,/api/v1/vendor/coupons/**,/api/v1/admin/coupons/**
+
+            - id: cart-service-api-docs
+              uri: ${CART_SERVICE_URL:http://localhost:8107}
+              predicates:
+                - Path=/cart-service/v3/api-docs
+              filters:
+                - SetPath=/v3/api-docs
+
+            # ---------- order-service ----------
+            # Live order updates for the vendor panel (Server-Sent Events, order-service README "Live order updates"):
+            # like the tracking stream below, one request that stays open, so its own route without the 10 s timeout.
+            # Listed BEFORE order-service, whose /api/v1/vendor/orders/** would take it too.
+            - id: order-service-vendor-order-stream
+              uri: ${ORDER_SERVICE_URL:http://localhost:8108}
+              predicates:
+                - Path=/api/v1/vendor/orders/stream
+                - Method=GET
+              metadata:
+                response-timeout: -1          # no timeout: a live stream is meant to stay open
+
+            - id: order-service
+              uri: ${ORDER_SERVICE_URL:http://localhost:8108}
+              predicates:
+                - Path=/api/v1/orders/**,/api/v1/vendor/orders/**,/api/v1/admin/orders/**
+
+            - id: order-service-api-docs
+              uri: ${ORDER_SERVICE_URL:http://localhost:8108}
+              predicates:
+                - Path=/order-service/v3/api-docs
+              filters:
+                - SetPath=/v3/api-docs
+
+            # ---------- payment-service ----------
+            - id: payment-service
+              uri: ${PAYMENT_SERVICE_URL:http://localhost:8109}
+              predicates:
+                - Path=/api/v1/payments/**,/api/v1/admin/payments/**
+
+            - id: payment-service-api-docs
+              uri: ${PAYMENT_SERVICE_URL:http://localhost:8109}
+              predicates:
+                - Path=/payment-service/v3/api-docs
+              filters:
+                - SetPath=/v3/api-docs
+
+            # ---------- notification-service ----------
+            - id: notification-service
+              uri: ${NOTIFICATION_SERVICE_URL:http://localhost:8111}
+              predicates:
+                - Path=/api/v1/notifications/**,/api/v1/admin/notifications/**
+
+            - id: notification-service-api-docs
+              uri: ${NOTIFICATION_SERVICE_URL:http://localhost:8111}
+              predicates:
+                - Path=/notification-service/v3/api-docs
+              filters:
+                - SetPath=/v3/api-docs
+
+            # ---------- delivery-service ----------
+            # Live delivery tracking stream (Server-Sent Events, docs/delivery-tracking.md): one request that stays open
+            # for minutes. Its own route, so the 10 s response timeout does not cut it (the service sends a keep-alive
+            # every 15 s instead), with its own circuit breaker and bulkhead settings (resilience4j ... instances below).
+            - id: delivery-service-tracking-stream
+              uri: ${DELIVERY_SERVICE_URL:http://localhost:8110}
+              predicates:
+                - Path=/api/v1/delivery-tracking/orders/*/stream
+                - Method=GET
+              metadata:
+                response-timeout: -1          # no timeout: a live stream is meant to stay open
+
+            - id: delivery-service
+              uri: ${DELIVERY_SERVICE_URL:http://localhost:8110}
+              predicates:
+                - Path=/api/v1/delivery/**,/api/v1/delivery-tracking/**,/api/v1/delivery-ratings/**,/api/v1/admin/delivery-partners/**,/api/v1/admin/delivery-zones/**,/api/v1/admin/deliveries/**
+
+            - id: delivery-proof-photos         # proof-of-delivery photos (any logged-in user)
+              uri: ${DELIVERY_SERVICE_URL:http://localhost:8110}
+              predicates:
+                - Path=/delivery-media/**
+                - Method=GET
+
+            - id: delivery-service-api-docs
+              uri: ${DELIVERY_SERVICE_URL:http://localhost:8110}
+              predicates:
+                - Path=/delivery-service/v3/api-docs
+              filters:
+                - SetPath=/v3/api-docs
+
+            # ---------- report-service ----------
+            - id: report-service
+              uri: ${REPORT_SERVICE_URL:http://localhost:8112}
+              predicates:
+                - Path=/api/v1/admin/reports/**,/api/v1/vendor/reports/**,/api/v1/super-admin/reports/**
+
+            - id: report-service-api-docs
+              uri: ${REPORT_SERVICE_URL:http://localhost:8112}
+              predicates:
+                - Path=/report-service/v3/api-docs
+              filters:
+                - SetPath=/v3/api-docs
+
+            # ---------- platform-service ----------
+            - id: platform-service
+              uri: ${PLATFORM_SERVICE_URL:http://localhost:8113}
+              predicates:
+                - Path=/api/v1/platform/**,/api/v1/banners/**,/api/v1/admin/banners/**,/api/v1/super-admin/settings/**,/api/v1/super-admin/feature-flags/**,/api/v1/super-admin/audit-log/**,/api/v1/super-admin/dead-letters/**
+
+            - id: platform-service-api-docs
+              uri: ${PLATFORM_SERVICE_URL:http://localhost:8113}
+              predicates:
+                - Path=/platform-service/v3/api-docs
+              filters:
+                - SetPath=/v3/api-docs
+
+            # ---------- mcp-client-service (AI shopping assistant) ----------
+            # Asking a question is slow (the model needs seconds) and costly (it runs on our CPU/GPU), so this route
+            # has a longer timeout, its own rate limit (app.rate-limit.policies "chat") and a smaller bulkhead
+            # (resilience4j.bulkhead.instances.mcp-client-service-chat).
+            - id: mcp-client-service-chat
+              uri: ${MCP_CLIENT_SERVICE_URL:http://localhost:8114}
+              predicates:
+                - Path=/api/v1/chat/messages
+                - Method=POST
+              metadata:
+                response-timeout: 180000      # ms; one answer takes 2-60 s when the model runs on a CPU
+
+            # Voice: a recording becomes text, an answer becomes speech (local speech server, CPU). Its own rate limit
+            # ("voice") and bulkhead; listed before the catch-all route below, which would otherwise match first.
+            - id: mcp-client-service-voice
+              uri: ${MCP_CLIENT_SERVICE_URL:http://localhost:8114}
+              predicates:
+                - Path=/api/v1/chat/transcriptions,/api/v1/chat/speech
+                - Method=POST
+              metadata:
+                response-timeout: 60000       # ms; mcp-client-service gives up after 45 s (app.voice.read-timeout)
+
+            - id: mcp-client-service          # reading and deleting conversations
+              uri: ${MCP_CLIENT_SERVICE_URL:http://localhost:8114}
+              predicates:
+                - Path=/api/v1/chat/**
+
+            - id: mcp-client-service-api-docs
+              uri: ${MCP_CLIENT_SERVICE_URL:http://localhost:8114}
+              predicates:
+                - Path=/mcp-client-service/v3/api-docs
+              filters:
+                - SetPath=/v3/api-docs
+
+            # mcp-server-service (the assistant's tools) is deliberately NOT routed: only mcp-client-service may call it.
+
+            # More services are added here phase by phase (copy two routes above).
+
+management:
+  tracing:
+    sampling:
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}     # share of requests that are traced (lower it in production)
+    export:
+      otlp:
+        enabled: ${TRACING_EXPORT_ENABLED:false}            # true when Jaeger runs (start-infra.ps1 -Profiles monitoring)
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: ${OTLP_TRACING_ENDPOINT:http://localhost:4318/v1/traces}   # Jaeger's OTLP receiver (HTTP)
+  observations:
+    enable:
+      "[spring.security]": false     # no spans for every security filter step: they made each gateway trace hard to read
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true   # response-time buckets: p95/p99 in Grafana and alerts, sample requests link to traces
+      slo:
+        # Two exact buckets on the per-route metric, for the latency SLO "99 % answered within 1 s"
+        # (infrastructure/prometheus/alerts/slo-rules.yml): spring_cloud_gateway_requests_seconds_bucket{le="0.5"|"1.0"}
+        "[spring.cloud.gateway.requests]": 500ms, 1s
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus, gateway   # /actuator/gateway/routes lists all routes
+  endpoint:
+    health:
+      probes:
+        enabled: true
+    gateway:
+      access: read-only   # off by default; read-only = list routes, but no changes at runtime
+
+logging:
+  pattern:
+    correlation: "[%X{correlationId:-}] [%X{traceId:-}] "   # correlation id (CorrelationIdFilter) and trace id, as in every service
+
+# Central Swagger UI: http://localhost:8080/swagger-ui.html  (pick a service in the top-right dropdown)
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    urls:
+      - name: auth-service
+        url: /auth-service/v3/api-docs
+      - name: customer-service
+        url: /customer-service/v3/api-docs
+      - name: store-service
+        url: /store-service/v3/api-docs
+      - name: product-service (catalog writes)
+        url: /product-service/v3/api-docs
+      - name: product-read-service (catalog reads)
+        url: /product-read-service/v3/api-docs
+      - name: inventory-service
+        url: /inventory-service/v3/api-docs
+      - name: cart-service
+        url: /cart-service/v3/api-docs
+      - name: order-service
+        url: /order-service/v3/api-docs
+      - name: payment-service
+        url: /payment-service/v3/api-docs
+      - name: notification-service
+        url: /notification-service/v3/api-docs
+      - name: delivery-service
+        url: /delivery-service/v3/api-docs
+      - name: report-service
+        url: /report-service/v3/api-docs
+      - name: platform-service
+        url: /platform-service/v3/api-docs
+      - name: mcp-client-service (shopping assistant)
+        url: /mcp-client-service/v3/api-docs
+    urls-primary-name: auth-service
+
+app:
+  # Logging (logback-spring.xml, docs/observability.md)
+  logging:
+    format: ${LOG_FORMAT:text}   # console: text (people) or json (ECS, one object per line, for a log collector)
+    loki:
+      enabled: ${LOKI_ENABLED:false}                             # true = also push every log line to Grafana Loki
+      url: ${LOKI_URL:http://localhost:3100/loki/api/v1/push}    # Loki's push API (start-infra.ps1 -Profiles monitoring)
+      environment: ${LOKI_ENVIRONMENT:local}                     # the "env" label in Loki: local, test, prod ...
+  jwt:
+    # MUST be the same secret as auth-service. Local default only - set JWT_SECRET in every other environment.
+    secret: ${JWT_SECRET:local-dev-only-jwt-secret-change-me-0123456789}
+    issuer: grocery-auth-service
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
+
+  # RATE LIMITING per client (ratelimit/RateLimitFilter): counted in Redis, so every gateway instance uses the same
+  # counters. A client is the logged-in user ("user:4"), or the IP address for guests ("ip:203.0.113.7").
+  # Too many requests -> 429 with a Retry-After header. These are the production values; application-local.yml relaxes
+  # the login limit for tests on your machine.
+  rate-limit:
+    # Proxies in front of the gateway that add X-Forwarded-For (a Kubernetes Ingress: 1). 0 = the address of the
+    # connection is the client. Never higher than the real number of proxies: clients could fake their address.
+    trusted-proxies: ${RATE_LIMIT_TRUSTED_PROXIES:0}
+    default-policy:                           # every request that no policy below matches
+      requests-per-second: ${RATE_LIMIT_REQUESTS_PER_SECOND:20}
+      burst: ${RATE_LIMIT_BURST:40}           # at most this many requests in a row (saved-up tokens)
+    policies:                                 # checked in this order, the first match wins
+      - name: login                           # guessing passwords, mass registrations (auth-service has no lockout)
+        methods: POST
+        paths: /api/v1/auth/login, /api/v1/auth/register, /api/v1/auth/forgot-password, /api/v1/auth/reset-password,
+               /api/v1/auth/social/session, /api/v1/auth/social/signup, /api/v1/auth/social/link
+        requests-per-minute: ${RATE_LIMIT_LOGIN_PER_MINUTE:10}
+        burst: ${RATE_LIMIT_LOGIN_BURST:10}
+      - name: social-login                    # the button's redirect and the provider's answer (social login)
+        paths: /api/v1/auth/oauth2/authorization/*, /api/v1/auth/login/oauth2/code/*
+        requests-per-minute: ${RATE_LIMIT_SOCIAL_LOGIN_PER_MINUTE:20}
+        burst: ${RATE_LIMIT_SOCIAL_LOGIN_BURST:10}
+      - name: chat                            # every question to the AI assistant runs the language model
+        methods: POST
+        paths: /api/v1/chat/messages
+        requests-per-minute: ${RATE_LIMIT_CHAT_PER_MINUTE:10}
+        burst: ${RATE_LIMIT_CHAT_BURST:10}
+      - name: voice                           # speech runs on the CPU too; a spoken question = 1 transcription + 1 speech
+        methods: POST
+        paths: /api/v1/chat/transcriptions, /api/v1/chat/speech
+        requests-per-minute: ${RATE_LIMIT_VOICE_PER_MINUTE:20}
+        burst: ${RATE_LIMIT_VOICE_BURST:10}
+
+  # FALLBACK answers when a service cannot answer (exception/GlobalErrorHandler)
+  fallback:
+    # GET paths whose data is only decoration: when their service is down, too slow or throttled, the gateway answers an
+    # EMPTY LIST (200, header X-Fallback: empty-list, message saying why) so the page still works.
+    # Never add prices, stock, carts, orders, payments or anything a decision depends on: there an honest 503 is better.
+    empty-list-paths: /api/v1/banners
+
+# =====================================================================
+# Resilience4j: the circuit breaker and the bulkhead of every route (the CircuitBreaker default filter creates one
+# of each per route, named after the route id). "configs.default" applies to all routes, "instances.<route id>"
+# overrides one route. Metrics: resilience4j_* in /actuator/prometheus (Grafana dashboard "Grocery services").
+# =====================================================================
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        # Counted as failures: calls without an answer (connection refused, timeouts). NOT counted: 4xx and the
+        # services' own error answers (a 503 with a message from cart-service is passed on unchanged).
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: ${GATEWAY_CB_WINDOW_SIZE:20}                  # look at the last 20 calls ...
+        minimum-number-of-calls: ${GATEWAY_CB_MINIMUM_CALLS:10}            # ... once there were at least 10
+        failure-rate-threshold: ${GATEWAY_CB_FAILURE_RATE:50}              # OPEN when 50 % of them failed
+        wait-duration-in-open-state: ${GATEWAY_CB_WAIT_IN_OPEN_STATE:15s}  # while OPEN: 503 at once, no call
+        automatic-transition-from-open-to-half-open-enabled: true          # then HALF_OPEN by itself ...
+        permitted-number-of-calls-in-half-open-state: 3                    # ... 3 test calls decide: CLOSED or OPEN
+        ignore-exceptions:
+          - io.github.resilience4j.bulkhead.BulkheadFullException          # our own throttling, not the service's fault
+    instances:
+      delivery-service-tracking-stream:
+        base-config: default
+        # Resilience4j counts calls over 60 s as "slow" and opens the circuit when all recent calls were slow. A live
+        # tracking stream stays open up to 30 minutes on purpose, so for this route only a 2-hour call is "slow".
+        slow-call-duration-threshold: 2h
+      order-service-vendor-order-stream:
+        base-config: default
+        slow-call-duration-threshold: 2h      # the same for the vendors' live order streams (open up to 30 minutes)
+
+  # THROTTLING: at most this many requests IN PROGRESS per route and gateway instance (with 3 gateway pods: 3 x 100).
+  # One more -> 503 "busy" at once with Retry-After: 1. Protects a slow service from a pile-up of waiting requests.
+  bulkhead:
+    configs:
+      default:
+        max-concurrent-calls: ${GATEWAY_MAX_CONCURRENT_CALLS:100}
+        max-wait-duration: 0                  # do not queue: a waiting request would only hold a connection
+    instances:
+      mcp-client-service-chat:
+        max-concurrent-calls: ${GATEWAY_CHAT_MAX_CONCURRENT_CALLS:20}   # each question keeps the model busy for seconds
+      mcp-client-service-voice:
+        max-concurrent-calls: ${GATEWAY_VOICE_MAX_CONCURRENT_CALLS:10}  # mcp-client-service itself runs 2 at a time
+      delivery-service-tracking-stream:
+        max-concurrent-calls: ${GATEWAY_TRACKING_MAX_STREAMS:2000}      # each open tracking page holds one for minutes
+      order-service-vendor-order-stream:
+        max-concurrent-calls: ${GATEWAY_VENDOR_ORDER_MAX_STREAMS:2000}  # each open vendor panel holds one for minutes

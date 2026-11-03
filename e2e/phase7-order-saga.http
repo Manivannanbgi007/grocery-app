@@ -1,0 +1,409 @@
+### =====================================================================
+### END-TO-END (Phase 7): the order saga, through the API gateway (port 8080)
+###
+###   POST /orders -> order PENDING + OrderCreated
+###     -> inventory reserves the stock (StockReserved)     -> cart removes the items, counts the coupon
+###     -> payment: COD accepted (PaymentConfirmed)  |  ONLINE: the customer pays -> PaymentConfirmed / PaymentFailed
+###     -> order CONFIRMED -> store accepts, packs, hands over -> the delivery partner picks it up and delivers it
+###   Cancel / reject -> stock released, a paid order refunded (RefundCompleted)
+###
+### Needs: infrastructure, auth, customer, store, product-read, inventory, cart, order, payment, delivery, api-gateway,
+###        and the connectors (scripts\register-connectors.ps1).
+### Written for the VS Code "REST Client" extension. Run the requests IN ORDER.
+### "wait" steps: each saga step travels through Kafka (outbox -> Debezium -> Kafka -> consumer), about a second each.
+### =====================================================================
+
+@gatewayUrl = http://localhost:8080
+
+@customerToken = {{customerLogin.response.body.$.data.accessToken}}
+@customer2Token = {{customer2Login.response.body.$.data.accessToken}}
+@vendorToken = {{vendorLogin.response.body.$.data.accessToken}}
+@adminToken = {{adminLogin.response.body.$.data.accessToken}}
+@partnerToken = {{partnerLogin.response.body.$.data.accessToken}}
+@deliveryId = {{partnerDelivery.response.body.$.data.content[0].id}}
+@codOrderId = {{codOrder.response.body.$.data.id}}
+@onlineOrderId = {{onlineOrder.response.body.$.data.id}}
+@failedOrderId = {{failedOrder.response.body.$.data.id}}
+@rejectedOrderId = {{rejectedOrder.response.body.$.data.id}}
+
+
+### 1. customer1 (user 4) logs in
+# @name customerLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "customer1@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 2. customer2 (user 7) logs in
+# @name customer2Login
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "customer2@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 3. vendor1 (Fresh Mart, store 1) logs in
+# @name vendorLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "vendor1@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 4. The admin logs in
+# @name adminLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 5. delivery1 (Arjun Singh, user 5, zone Indiranagar) logs in
+# @name partnerLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "delivery1@grocery.com",
+  "password": "Password@123"
+}
+
+
+### ===== A. Cash on delivery, all the way to DELIVERED =====
+
+
+### 6. customer1's seed cart (Fresh Mart, 201.00) with coupon SAVE10 -> 20.10 off, payable 210.90
+PUT {{gatewayUrl}}/api/v1/cart/coupon
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "code": "SAVE10"
+}
+
+
+### 7. Place the order: COD to the HOME address (1) -> 201, status PENDING
+# @name codOrder
+POST {{gatewayUrl}}/api/v1/orders
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "addressId": 1,
+  "paymentMethod": "COD",
+  "note": "Please ring the bell twice"
+}
+
+
+### 8. (wait) Stock reserved + COD accepted -> CONFIRMED, payment CASH_ON_DELIVERY, timeline has 2 steps
+# @wait 4
+GET {{gatewayUrl}}/api/v1/orders/{{codOrderId}}
+Authorization: Bearer {{customerToken}}
+
+
+### 9. The cart was emptied by OrderCreated (cart-service)
+GET {{gatewayUrl}}/api/v1/cart
+Authorization: Bearer {{customerToken}}
+
+
+### 10. Search shows the reserved stock: Tomato 120 -> 118 available
+GET {{gatewayUrl}}/api/v1/products?q=tomato
+Authorization: Bearer {{customerToken}}
+
+
+### 11. vendor1's new orders (CONFIRMED) -> the order is waiting
+GET {{gatewayUrl}}/api/v1/vendor/orders?status=CONFIRMED
+Authorization: Bearer {{vendorToken}}
+
+
+### 12. vendor1 accepts it
+POST {{gatewayUrl}}/api/v1/vendor/orders/{{codOrderId}}/accept
+Authorization: Bearer {{vendorToken}}
+
+
+### 13. ...packs it
+POST {{gatewayUrl}}/api/v1/vendor/orders/{{codOrderId}}/pack
+Authorization: Bearer {{vendorToken}}
+
+
+### 14. ...and hands it over
+POST {{gatewayUrl}}/api/v1/vendor/orders/{{codOrderId}}/ready-for-pickup
+Authorization: Bearer {{vendorToken}}
+
+
+### 15. (wait) delivery1 goes online -> delivery-service assigns the waiting delivery to them (DeliveryAssigned)
+# @wait 3
+POST {{gatewayUrl}}/api/v1/delivery/availability/online
+Authorization: Bearer {{partnerToken}}
+
+
+### 16. delivery1's current delivery: ASSIGNED, pickup at Fresh Mart, drop at the customer's address
+# @name partnerDelivery
+GET {{gatewayUrl}}/api/v1/delivery/deliveries?active=true
+Authorization: Bearer {{partnerToken}}
+
+
+### 17. delivery1 accepts it
+POST {{gatewayUrl}}/api/v1/delivery/deliveries/{{deliveryId}}/accept
+Authorization: Bearer {{partnerToken}}
+
+
+### 18. ...collects it at the store (DeliveryPickedUp -> order OUT_FOR_DELIVERY)
+POST {{gatewayUrl}}/api/v1/delivery/deliveries/{{deliveryId}}/pick-up
+Authorization: Bearer {{partnerToken}}
+
+
+### 19. (wait) The order is OUT_FOR_DELIVERY and shows deliveryPartnerName "Arjun Singh"
+# @wait 3
+GET {{gatewayUrl}}/api/v1/orders/{{codOrderId}}
+Authorization: Bearer {{customerToken}}
+
+
+### 20. Cancel now -> 400 "An order that is OUT_FOR_DELIVERY can no longer be cancelled"
+POST {{gatewayUrl}}/api/v1/orders/{{codOrderId}}/cancel
+Authorization: Bearer {{customerToken}}
+
+
+### 21. ...starts the trip
+POST {{gatewayUrl}}/api/v1/delivery/deliveries/{{deliveryId}}/start
+Authorization: Bearer {{partnerToken}}
+
+
+### 22. ...and delivers it (DeliveryCompleted -> order DELIVERED, paymentStatus PAID: the cash was collected)
+POST {{gatewayUrl}}/api/v1/delivery/deliveries/{{deliveryId}}/deliver
+Authorization: Bearer {{partnerToken}}
+
+
+### 23. (wait) payment-service: COLLECTED
+# @wait 4
+GET {{gatewayUrl}}/api/v1/payments/orders/{{codOrderId}}
+Authorization: Bearer {{customerToken}}
+
+
+### ===== B. Online payment, paid, then cancelled -> refund =====
+
+
+### 24. customer1 adds 2 dozen bananas (120.00)
+POST {{gatewayUrl}}/api/v1/cart/items
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "productId": 4,
+  "quantity": 2
+}
+
+
+### 25. Place the order ONLINE -> PENDING
+# @name onlineOrder
+POST {{gatewayUrl}}/api/v1/orders
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "addressId": 1,
+  "paymentMethod": "ONLINE"
+}
+
+
+### 26. (wait) Stock reserved -> the payment waits for the customer: AWAITING_PAYMENT, canPayNow true
+# @wait 4
+GET {{gatewayUrl}}/api/v1/payments/orders/{{onlineOrderId}}
+Authorization: Bearer {{customerToken}}
+
+
+### 27. Pay with the mock gateway -> PAID
+POST {{gatewayUrl}}/api/v1/payments/orders/{{onlineOrderId}}/mock-pay
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "success": true
+}
+
+
+### 28. (wait) The order is CONFIRMED, paymentStatus PAID
+# @wait 3
+GET {{gatewayUrl}}/api/v1/orders/{{onlineOrderId}}
+Authorization: Bearer {{customerToken}}
+
+
+### 29. The customer cancels it -> CANCELLED
+POST {{gatewayUrl}}/api/v1/orders/{{onlineOrderId}}/cancel
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "reason": "Ordered by mistake"
+}
+
+
+### 30. (wait) Compensation: the payment is REFUNDED (refundReference mock_refund_...)
+# @wait 4
+GET {{gatewayUrl}}/api/v1/payments/orders/{{onlineOrderId}}
+Authorization: Bearer {{customerToken}}
+
+
+### 31. ...and the order shows paymentStatus REFUNDED
+GET {{gatewayUrl}}/api/v1/orders/{{onlineOrderId}}
+Authorization: Bearer {{customerToken}}
+
+
+### ===== C. Online payment declined -> the order is cancelled =====
+
+
+### 32. customer1 adds 1 kg of Shimla apples (162.00)
+POST {{gatewayUrl}}/api/v1/cart/items
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "productId": 5,
+  "quantity": 1
+}
+
+
+### 33. Place the order ONLINE
+# @name failedOrder
+POST {{gatewayUrl}}/api/v1/orders
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "addressId": 1,
+  "paymentMethod": "ONLINE"
+}
+
+
+### 34. (wait) The bank declines the payment (mock)
+# @wait 4
+POST {{gatewayUrl}}/api/v1/payments/orders/{{failedOrderId}}/mock-pay
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "success": false
+}
+
+
+### 35. (wait) -> CANCELLED by SYSTEM "Payment failed: ...", paymentStatus FAILED (stock released)
+# @wait 4
+GET {{gatewayUrl}}/api/v1/orders/{{failedOrderId}}
+Authorization: Bearer {{customerToken}}
+
+
+### ===== D. The store rejects an order =====
+
+
+### 36. customer2 (user 7) adds 3 x Lay's (60.00) and 1 x Surf Excel (195.50) from Fresh Mart
+POST {{gatewayUrl}}/api/v1/cart/items
+Authorization: Bearer {{customer2Token}}
+Content-Type: application/json
+
+{
+  "productId": 9,
+  "quantity": 3
+}
+
+
+### 37. ...
+POST {{gatewayUrl}}/api/v1/cart/items
+Authorization: Bearer {{customer2Token}}
+Content-Type: application/json
+
+{
+  "productId": 10,
+  "quantity": 1
+}
+
+
+### 38. Place the order COD to customer2's HOME address (3, PIN 560008)
+# @name rejectedOrder
+POST {{gatewayUrl}}/api/v1/orders
+Authorization: Bearer {{customer2Token}}
+Content-Type: application/json
+
+{
+  "addressId": 3,
+  "paymentMethod": "COD"
+}
+
+
+### 39. (wait) vendor1 rejects it -> REJECTED (stock released, payment cancelled)
+# @wait 4
+POST {{gatewayUrl}}/api/v1/vendor/orders/{{rejectedOrderId}}/reject
+Authorization: Bearer {{vendorToken}}
+Content-Type: application/json
+
+{
+  "reason": "Surf Excel is damaged, sorry"
+}
+
+
+### 40. (wait) customer2 sees the reason in the timeline
+# @wait 3
+GET {{gatewayUrl}}/api/v1/orders/{{rejectedOrderId}}
+Authorization: Bearer {{customer2Token}}
+
+
+### 41. (wait) payment-service: CANCELLED (nothing was paid)
+GET {{gatewayUrl}}/api/v1/payments/orders/{{rejectedOrderId}}
+Authorization: Bearer {{customer2Token}}
+
+
+### ===== E. Problems are caught before the order exists =====
+
+
+### 42. customer2 adds 1 x Amul Butter (56.00)
+POST {{gatewayUrl}}/api/v1/cart/items
+Authorization: Bearer {{customer2Token}}
+Content-Type: application/json
+
+{
+  "productId": 7,
+  "quantity": 1
+}
+
+
+### 43. Amul Butter alone (56.00) is below the minimum order value -> 409 with the problem in "errors"
+POST {{gatewayUrl}}/api/v1/orders
+Authorization: Bearer {{customer2Token}}
+Content-Type: application/json
+
+{
+  "addressId": 3,
+  "paymentMethod": "COD"
+}
+
+
+### 44. My order history (customer1): 3 orders, newest first
+GET {{gatewayUrl}}/api/v1/orders
+Authorization: Bearer {{customerToken}}
+
+
+### 45. Admin: every cancelled order
+GET {{gatewayUrl}}/api/v1/admin/orders?status=CANCELLED
+Authorization: Bearer {{adminToken}}
+
+
+### 46. Admin: refunds
+GET {{gatewayUrl}}/api/v1/admin/payments?status=REFUNDED
+Authorization: Bearer {{adminToken}}
+
+
+### 47. CLEAN UP: customer2 empties the cart
+DELETE {{gatewayUrl}}/api/v1/cart
+Authorization: Bearer {{customer2Token}}

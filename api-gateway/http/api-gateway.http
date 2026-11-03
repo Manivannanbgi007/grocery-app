@@ -1,0 +1,145 @@
+### =====================================================================
+### api-gateway - end-to-end requests through the single entry point
+###
+### Needs: infrastructure (scripts\start-infra.ps1), auth-service (8101) and api-gateway (8080).
+###
+### Written for the VS Code "REST Client" extension: run requests 1-4 first.
+### They log in and the tokens are reused below ({{customerToken}} ...).
+### (IntelliJ: copy the accessToken from a login response into the variables by hand.)
+###
+### Seed users - password for all: Password@123  (see docs/seed-data.md)
+### =====================================================================
+
+@gatewayUrl = http://localhost:8080
+
+@customerToken = {{customerLogin.response.body.$.data.accessToken}}
+@vendorToken = {{vendorLogin.response.body.$.data.accessToken}}
+@adminToken = {{adminLogin.response.body.$.data.accessToken}}
+@superAdminToken = {{superAdminLogin.response.body.$.data.accessToken}}
+
+
+### 1. Log in as a customer (public endpoint, no token needed)
+# @name customerLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "customer1@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 2. Log in as a vendor (the token contains storeId = 1)
+# @name vendorLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "vendor1@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 3. Log in as an admin
+# @name adminLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 4. Log in as the super admin
+# @name superAdminLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "superadmin@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 5. Customer: my account. The gateway turns the token into X-User-Id / X-User-Role for auth-service.
+GET {{gatewayUrl}}/api/v1/auth/me
+Authorization: Bearer {{customerToken}}
+
+
+### 6. Vendor: my account (storeId 1 comes from the token)
+GET {{gatewayUrl}}/api/v1/auth/me
+Authorization: Bearer {{vendorToken}}
+
+
+### 7. No token -> 401 from the gateway (the request never reaches auth-service)
+GET {{gatewayUrl}}/api/v1/auth/me
+
+
+### 8. Broken token -> 401
+GET {{gatewayUrl}}/api/v1/auth/me
+Authorization: Bearer this.is.not-a-valid-token
+
+
+### 9. Customer calls an admin endpoint -> 403
+GET {{gatewayUrl}}/api/v1/admin/users
+Authorization: Bearer {{customerToken}}
+
+
+### 10. Admin searches users -> 200
+GET {{gatewayUrl}}/api/v1/admin/users?role=VENDOR&size=5
+Authorization: Bearer {{adminToken}}
+
+
+### 11. Admin calls a super-admin endpoint -> 403
+PATCH {{gatewayUrl}}/api/v1/super-admin/users/7/role
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "role": "ADMIN"
+}
+
+
+### 12. Super admin creates an admin -> 201 (run once; a second run gives 409)
+POST {{gatewayUrl}}/api/v1/super-admin/admins
+Authorization: Bearer {{superAdminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Support Admin",
+  "email": "support.admin@grocery.com",
+  "phone": "9123400001",
+  "password": "Password@123"
+}
+
+
+### 13. Pretending to be the super admin does not work: the gateway replaces X-User-* with the token's values
+GET {{gatewayUrl}}/api/v1/auth/me
+Authorization: Bearer {{customerToken}}
+X-User-Id: 1
+X-User-Role: SUPER_ADMIN
+
+
+### 14. A path no service handles yet -> 404 in the standard shape
+GET {{gatewayUrl}}/api/v1/no-such-endpoint
+Authorization: Bearer {{customerToken}}
+
+
+### 15. Internal service-to-service paths are never reachable through the gateway -> 403
+GET {{gatewayUrl}}/internal/users/1
+Authorization: Bearer {{superAdminToken}}
+
+
+### 16. Your own correlation id comes back in the response header and appears in the service logs
+GET {{gatewayUrl}}/api/v1/auth/me
+Authorization: Bearer {{customerToken}}
+X-Correlation-Id: my-debug-request-001
+
+
+### 17. Gateway health (includes Redis)
+GET {{gatewayUrl}}/actuator/health
+
+
+### 18. All configured routes
+GET {{gatewayUrl}}/actuator/gateway/routes

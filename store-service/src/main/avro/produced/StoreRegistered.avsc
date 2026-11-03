@@ -1,0 +1,14 @@
+{
+  "type": "record",
+  "name": "StoreRegistered",
+  "namespace": "com.grocery.events.store",
+  "doc": "A vendor registered a new store; it now waits for admin approval. Producer: store-service. Topic: grocery.store.events, key = storeId.",
+  "fields": [
+    { "name": "eventId",     "type": "string", "doc": "Unique id of this event (UUID). Consumers use it to skip duplicates." },
+    { "name": "occurredAt",  "type": { "type": "long", "logicalType": "timestamp-millis" } },
+    { "name": "storeId",     "type": "long" },
+    { "name": "ownerUserId", "type": "long", "doc": "The vendor (auth-service user id) who owns the store" },
+    { "name": "storeName",   "type": "string" },
+    { "name": "city",        "type": "string" }
+  ]
+}

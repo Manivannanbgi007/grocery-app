@@ -1,0 +1,29 @@
+# Network rule for the whole namespace: a grocery pod accepts connections only from other pods of the namespace
+# "grocery" (the other services and this cluster's NGINX gateway, which also runs here). Pods of other namespaces
+# cannot call the services, and nothing outside the cluster reaches them except through the Gateway.
+#
+# It selects every pod with an "app" label (our services and the frontend), EXCEPT:
+#   - mcp-client-service and mcp-server-service: they have stricter rules of their own (services/<name>/networkpolicy.yaml).
+#     Rules add up, so this one would open them to every pod again.
+#   - the NGINX gateway's own pods: they have no "app" label, because the Gateway must accept traffic from outside.
+# kind's network plugin (kindnet) enforces NetworkPolicies; kubelet health probes are not affected.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-grocery-namespace
+  namespace: grocery
+  labels:
+    app.kubernetes.io/part-of: grocery
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: Exists
+      - key: app
+        operator: NotIn
+        values: [mcp-client-service, mcp-server-service]
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}              # any pod of this namespace

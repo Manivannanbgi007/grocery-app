@@ -1,0 +1,109 @@
+{
+  "type": "record",
+  "name": "OrderReadyForPickup",
+  "namespace": "com.grocery.events.order",
+  "doc": "The order waits at the store for a delivery partner. Carries both addresses (and their coordinates, for live tracking), so delivery-service (Phase 9) needs no extra call. Producer: order-service. Topic: grocery.order.events, key = orderId.",
+  "fields": [
+    {
+      "name": "eventId",
+      "type": "string",
+      "doc": "Unique id of this event (UUID). Consumers use it to skip duplicates."
+    },
+    {
+      "name": "occurredAt",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      }
+    },
+    {
+      "name": "orderId",
+      "type": "long"
+    },
+    {
+      "name": "customerUserId",
+      "type": "long"
+    },
+    {
+      "name": "storeId",
+      "type": "long"
+    },
+    {
+      "name": "storeName",
+      "type": "string"
+    },
+    {
+      "name": "storePhone",
+      "type": "string"
+    },
+    {
+      "name": "storeAddress",
+      "type": "string",
+      "doc": "One line, e.g. \"45, 100 Feet Road, Indiranagar, Bengaluru\""
+    },
+    {
+      "name": "storePincode",
+      "type": "string"
+    },
+    {
+      "name": "deliveryContactName",
+      "type": "string"
+    },
+    {
+      "name": "deliveryContactPhone",
+      "type": "string"
+    },
+    {
+      "name": "deliveryAddress",
+      "type": "string",
+      "doc": "One line"
+    },
+    {
+      "name": "deliveryPincode",
+      "type": "string"
+    },
+    {
+      "name": "paymentMethod",
+      "type": "string"
+    },
+    {
+      "name": "amountToCollect",
+      "type": "string",
+      "doc": "Cash the delivery partner collects: the total for COD, \"0.00\" for paid orders"
+    },
+    {
+      "name": "storeLatitude",
+      "type": [
+        "null",
+        "double"
+      ],
+      "default": null,
+      "doc": "Where the store is (WGS84). Null when the store has no coordinates; optional so events without it stay readable."
+    },
+    {
+      "name": "storeLongitude",
+      "type": [
+        "null",
+        "double"
+      ],
+      "default": null
+    },
+    {
+      "name": "deliveryLatitude",
+      "type": [
+        "null",
+        "double"
+      ],
+      "default": null,
+      "doc": "Where the customer's address is (WGS84). Null when the address has no coordinates."
+    },
+    {
+      "name": "deliveryLongitude",
+      "type": [
+        "null",
+        "double"
+      ],
+      "default": null
+    }
+  ]
+}

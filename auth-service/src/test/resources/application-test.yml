@@ -1,0 +1,9 @@
+# Test profile (no seed data).
+spring:
+  kafka:
+    properties:
+      schema.registry.url: mock://grocery-tests   # in-memory Schema Registry, shared by everything in the JVM
+
+app:
+  password-reset:
+    expose-token-in-response: true                # the flow test reads the token from the response

@@ -1,0 +1,125 @@
+### =====================================================================
+### END-TO-END (Phase 6): cart and coupons, through the API gateway (port 8080)
+###
+###   customer -> gateway -> cart-service -> (REST) product-read-service: current price + stock
+###
+### Needs: infrastructure, auth-service, product-read-service (with stock, Phase 5), cart-service, api-gateway.
+### Written for the VS Code "REST Client" extension. Run the requests IN ORDER.
+### =====================================================================
+
+@gatewayUrl = http://localhost:8080
+
+@customerToken = {{customerLogin.response.body.$.data.accessToken}}
+@vendorToken = {{vendorLogin.response.body.$.data.accessToken}}
+
+
+### 1. customer2 (user 7, empty cart) logs in
+# @name customerLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "customer2@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 2. vendor2 (Green Basket, store 2) logs in
+# @name vendorLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "vendor2@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 3. vendor2 creates a store coupon: 15 % off (max 40.00) on 150.00 or more
+POST {{gatewayUrl}}/api/v1/vendor/coupons
+Authorization: Bearer {{vendorToken}}
+Content-Type: application/json
+
+{
+  "code": "GREENWEEK15",
+  "description": "Green Basket week: 15% off (up to 40) on 150 or more",
+  "discountType": "PERCENTAGE",
+  "discountValue": 15,
+  "maxDiscountAmount": 40.00,
+  "minOrderAmount": 150.00,
+  "validFrom": "2026-10-01T00:00:00Z",
+  "validUntil": "2027-12-31T23:59:59Z"
+}
+
+
+### 4. Anyone (no token) can see Green Basket's offers -> GREENWEEK15, GREEN30 and the platform coupons
+GET {{gatewayUrl}}/api/v1/coupons?storeId=2
+
+
+### 5. The customer adds 3 x Organic Carrot (42.75) and 2 x Haldiram's Aloo Bhujia (55.00) = 238.25
+POST {{gatewayUrl}}/api/v1/cart/items
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "productId": 12,
+  "quantity": 3
+}
+
+
+### 6. ...
+POST {{gatewayUrl}}/api/v1/cart/items
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "productId": 15,
+  "quantity": 2
+}
+
+
+### 7. Pomegranate is out of stock (seed) -> 400 "Pomegranate is out of stock"
+POST {{gatewayUrl}}/api/v1/cart/items
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "productId": 13,
+  "quantity": 1
+}
+
+
+### 8. Tomato is from Fresh Mart -> 409 (one store per cart)
+POST {{gatewayUrl}}/api/v1/cart/items
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "productId": 1,
+  "quantity": 1
+}
+
+
+### 9. GREENWEEK15: 15 % of 238.25 = 35.74 -> payable 238.25 - 35.74 + 30.00 delivery = 232.51
+PUT {{gatewayUrl}}/api/v1/cart/coupon
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "code": "greenweek15"
+}
+
+
+### 10. Checkout page: ready, with today's prices
+GET {{gatewayUrl}}/api/v1/cart/checkout
+Authorization: Bearer {{customerToken}}
+
+
+### 11. A vendor token cannot use the customer cart -> 403
+GET {{gatewayUrl}}/api/v1/cart
+Authorization: Bearer {{vendorToken}}
+
+
+### 12. CLEAN UP: the customer empties the cart
+DELETE {{gatewayUrl}}/api/v1/cart
+Authorization: Bearer {{customerToken}}

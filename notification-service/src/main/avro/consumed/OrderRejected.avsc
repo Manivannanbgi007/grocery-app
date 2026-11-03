@@ -1,0 +1,36 @@
+{
+  "type": "record",
+  "name": "OrderRejected",
+  "namespace": "com.grocery.events.order",
+  "doc": "The store rejected the order. Compensation like OrderCancelled: stock released, payment refunded. Producer: order-service. Topic: grocery.order.events, key = orderId.",
+  "fields": [
+    {
+      "name": "eventId",
+      "type": "string",
+      "doc": "Unique id of this event (UUID). Consumers use it to skip duplicates."
+    },
+    {
+      "name": "occurredAt",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      }
+    },
+    {
+      "name": "orderId",
+      "type": "long"
+    },
+    {
+      "name": "customerUserId",
+      "type": "long"
+    },
+    {
+      "name": "storeId",
+      "type": "long"
+    },
+    {
+      "name": "reason",
+      "type": "string"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+# frontend: keep at least 2 pods running during planned maintenance (kubectl drain of a node, cluster upgrades).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: frontend
+  namespace: grocery
+  labels:
+    app: frontend
+    app.kubernetes.io/part-of: grocery
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: frontend

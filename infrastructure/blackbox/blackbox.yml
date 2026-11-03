@@ -1,0 +1,20 @@
+# Blackbox exporter: checks URLs for Prometheus (job "service-health" in prometheus/prometheus.yml).
+# Module "spring_health": GET /actuator/health of a Spring Boot service. Healthy = HTTP 200 with "status":"UP".
+# Spring Boot answers 503 with "status":"DOWN" when a dependency it checks (database, Redis, Elasticsearch, mail
+# server ...) is not available, so this catches more than "the process is running".
+modules:
+  spring_health:
+    prober: http
+    timeout: 5s
+    http:
+      method: GET
+      valid_status_codes: [200]
+      fail_if_body_not_matches_regexp: ['"status":"UP"']
+      preferred_ip_protocol: ip4
+  # Module "tcp_connect": does the server accept a TCP connection? For the Kafka broker (job "kafka-broker"), which has
+  # no HTTP health page. The Kafka exporter cannot tell us: it needs the broker itself.
+  tcp_connect:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      preferred_ip_protocol: ip4

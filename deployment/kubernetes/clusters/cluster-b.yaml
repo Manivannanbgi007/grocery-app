@@ -1,0 +1,31 @@
+# Cluster B: one control plane + two workers, the same as cluster A (cluster-a.yaml explains every line).
+# Create:  kind create cluster --config deployment/kubernetes/clusters/cluster-b.yaml   (scripts\k8s-create-clusters.ps1 does it)
+# kubectl context: kind-grocery-cluster-b
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: grocery-cluster-b
+
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30080             # the cluster's NGINX gateway
+        hostPort: 8282                   # http://localhost:8282 = cluster B
+        listenAddress: 127.0.0.1
+        protocol: TCP
+
+  - role: worker
+    extraMounts:
+      - hostPath: D:/Drive E/dev/grocery-app/product-service/uploads
+        containerPath: /grocery-files/product-uploads
+      - hostPath: D:/Drive E/dev/grocery-app/delivery-service/uploads
+        containerPath: /grocery-files/delivery-uploads
+      - hostPath: D:/Drive E/dev/grocery-app/order-service/data/invoices
+        containerPath: /grocery-files/order-invoices
+  - role: worker
+    extraMounts:
+      - hostPath: D:/Drive E/dev/grocery-app/product-service/uploads
+        containerPath: /grocery-files/product-uploads
+      - hostPath: D:/Drive E/dev/grocery-app/delivery-service/uploads
+        containerPath: /grocery-files/delivery-uploads
+      - hostPath: D:/Drive E/dev/grocery-app/order-service/data/invoices
+        containerPath: /grocery-files/order-invoices

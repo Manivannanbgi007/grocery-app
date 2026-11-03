@@ -1,0 +1,142 @@
+### =====================================================================
+### END-TO-END (Phase 10): online payment deadline and the admin payment summary, through the gateway (8080)
+###
+###   An ONLINE order that nobody pays: after the deadline the payment fails ("Not paid in time"),
+###   the order is cancelled by the SYSTEM and the reserved stock goes back on the shelf.
+###
+### Needs: every service of Phases 1-9 + the connectors. Start payment-service with a SHORT deadline,
+### otherwise step 7 waits 15 minutes:
+###   $env:ONLINE_PAYMENT_TIMEOUT="1m"; $env:PAYMENT_TIMEOUT_CHECK_INTERVAL="10s"; .\mvnw spring-boot:run
+### (Razorpay itself is tested with test keys - see payment-service/http/payment-service.http, requests 16-19.)
+### Written for the VS Code "REST Client" extension. Run the requests IN ORDER.
+### =====================================================================
+
+@gatewayUrl = http://localhost:8080
+
+@customerToken = {{customerLogin.response.body.$.data.accessToken}}
+@adminToken = {{adminLogin.response.body.$.data.accessToken}}
+@vendorToken = {{vendorLogin.response.body.$.data.accessToken}}
+@unpaidOrderId = {{unpaidOrder.response.body.$.data.id}}
+
+
+### 1. customer1 (user 4) logs in
+# @name customerLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "customer1@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 2. The admin logs in
+# @name adminLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 3. vendor1 (Fresh Mart) logs in
+# @name vendorLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "vendor1@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 4. customer1 starts with an empty cart
+DELETE {{gatewayUrl}}/api/v1/cart
+Authorization: Bearer {{customerToken}}
+
+
+### 5. ...adds 3 x Farm Eggs (3 x 48.00)
+POST {{gatewayUrl}}/api/v1/cart/items
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "productId": 8,
+  "quantity": 3
+}
+
+
+### 6. ...and orders ONLINE (the stock is reserved, then the payment waits for the customer)
+# @name unpaidOrder
+POST {{gatewayUrl}}/api/v1/orders
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "addressId": 1,
+  "paymentMethod": "ONLINE"
+}
+
+
+### 7. (wait) AWAITING_PAYMENT, canPayNow true, payBefore = the deadline
+# @wait 4
+GET {{gatewayUrl}}/api/v1/payments/orders/{{unpaidOrderId}}
+Authorization: Bearer {{customerToken}}
+
+
+### 8. vendor1's stock of eggs: 3 reserved for this order
+GET {{gatewayUrl}}/api/v1/vendor/inventory/8
+Authorization: Bearer {{vendorToken}}
+
+
+### 9. (wait) The customer never pays. After the deadline -> FAILED "Not paid in time" (PaymentFailed)
+# @wait 80
+GET {{gatewayUrl}}/api/v1/payments/orders/{{unpaidOrderId}}
+Authorization: Bearer {{customerToken}}
+
+
+### 10. The order was cancelled by the SYSTEM: "Payment failed: Not paid in time"
+GET {{gatewayUrl}}/api/v1/orders/{{unpaidOrderId}}
+Authorization: Bearer {{customerToken}}
+
+
+### 11. Paying now is too late -> 400 "This payment cannot be paid (status FAILED)"
+POST {{gatewayUrl}}/api/v1/payments/orders/{{unpaidOrderId}}/mock-pay
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "success": true
+}
+
+
+### 12. The eggs are back on the shelf (nothing reserved for this order any more)
+GET {{gatewayUrl}}/api/v1/vendor/inventory/8
+Authorization: Bearer {{vendorToken}}
+
+
+### 13. The customer was told (payment failed, order cancelled)
+GET {{gatewayUrl}}/api/v1/notifications
+Authorization: Bearer {{customerToken}}
+
+
+### 14. Admin: failed payments
+GET {{gatewayUrl}}/api/v1/admin/payments?status=FAILED
+Authorization: Bearer {{adminToken}}
+
+
+### 15. Admin: money in and out this month (online paid, cash collected, refunded; India time)
+GET {{gatewayUrl}}/api/v1/admin/payments/summary?from=2026-10-01&to=2026-10-31
+Authorization: Bearer {{adminToken}}
+
+
+### 16. Admin: a summary longer than a year -> 400
+GET {{gatewayUrl}}/api/v1/admin/payments/summary?from=2025-01-01&to=2026-10-31
+Authorization: Bearer {{adminToken}}
+
+
+### 17. Customers cannot see the summary -> 403
+GET {{gatewayUrl}}/api/v1/admin/payments/summary?from=2026-10-01&to=2026-10-31
+Authorization: Bearer {{customerToken}}

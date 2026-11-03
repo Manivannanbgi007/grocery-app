@@ -1,0 +1,31 @@
+# =====================================================================
+# Local development profile (active by default - see spring.profiles.default).
+# Only what must differ on a developer machine; everything else comes from application.yml (the production values).
+# =====================================================================
+
+app:
+  rate-limit:
+    # A profile REPLACES a list as a whole (it does not merge it), so the chat and voice policies are repeated here unchanged.
+    policies:
+      # The website's Playwright tests and the .http files log in many times a minute from one address (localhost).
+      # Production keeps 10 per minute (application.yml).
+      - name: login
+        methods: POST
+        paths: /api/v1/auth/login, /api/v1/auth/register, /api/v1/auth/forgot-password, /api/v1/auth/reset-password,
+               /api/v1/auth/social/session, /api/v1/auth/social/signup, /api/v1/auth/social/link
+        requests-per-minute: ${RATE_LIMIT_LOGIN_PER_MINUTE:120}
+        burst: ${RATE_LIMIT_LOGIN_BURST:60}
+      - name: social-login                    # the button's redirect and the provider's answer (social login)
+        paths: /api/v1/auth/oauth2/authorization/*, /api/v1/auth/login/oauth2/code/*
+        requests-per-minute: ${RATE_LIMIT_SOCIAL_LOGIN_PER_MINUTE:120}
+        burst: ${RATE_LIMIT_SOCIAL_LOGIN_BURST:60}
+      - name: chat
+        methods: POST
+        paths: /api/v1/chat/messages
+        requests-per-minute: ${RATE_LIMIT_CHAT_PER_MINUTE:10}
+        burst: ${RATE_LIMIT_CHAT_BURST:10}
+      - name: voice
+        methods: POST
+        paths: /api/v1/chat/transcriptions, /api/v1/chat/speech
+        requests-per-minute: ${RATE_LIMIT_VOICE_PER_MINUTE:20}
+        burst: ${RATE_LIMIT_VOICE_BURST:10}

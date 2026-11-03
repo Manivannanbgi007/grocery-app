@@ -1,0 +1,609 @@
+# Unit tests of the alert rules (alerts/grocery-alerts.yml), run with Prometheus' own tool "promtool":
+#   docker compose -f infrastructure/docker-compose.yml --profile monitoring run --rm --entrypoint promtool prometheus test rules /etc/prometheus/tests/grocery-alerts-test.yml
+# Each test feeds made-up metric values over time ("input_series") and checks which alerts fire when.
+# Value notation: "1 1 0x10" = 1, 1, then 0 eleven times; "0+6x40" = 0, 6, 12, ... (41 values); one value per interval.
+rule_files:
+  - ../alerts/grocery-alerts.yml
+  - ../alerts/slo-rules.yml
+
+evaluation_interval: 15s
+
+tests:
+  - name: a stopped service fires ServiceDown after 1 minute, not before
+    interval: 15s
+    input_series:
+      - series: 'up{job="grocery-services", service="order-service"}'
+        values: '1 1 0x10'                       # down from 30 s on
+    alert_rule_test:
+      - eval_time: 75s                           # down for 45 s: only "pending"
+        alertname: ServiceDown
+        exp_alerts: []
+      - eval_time: 105s                          # down for 75 s: firing
+        alertname: ServiceDown
+        exp_alerts:
+          - exp_labels: { severity: critical, job: grocery-services, service: order-service }
+            exp_annotations:
+              summary: "order-service is down"
+              description: "Prometheus could not read the metrics of order-service for 1 minute: the service is stopped, crashed or not reachable."
+
+  - name: ServiceUnhealthy only for services that run (a stopped one is ServiceDown)
+    interval: 15s
+    input_series:
+      - series: 'up{job="grocery-services", service="cart-service"}'
+        values: '1x20'
+      - series: 'probe_success{job="service-health", service="cart-service"}'
+        values: '0x20'                           # running, but /actuator/health is not UP
+      - series: 'up{job="grocery-services", service="order-service"}'
+        values: '0x20'
+      - series: 'probe_success{job="service-health", service="order-service"}'
+        values: '0x20'                           # stopped: no ServiceUnhealthy for it
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: ServiceUnhealthy
+        exp_alerts:
+          - exp_labels: { severity: critical, job: service-health, service: cart-service }
+            exp_annotations:
+              summary: "cart-service reports itself unhealthy"
+              description: "/actuator/health of cart-service is not UP (or did not answer within 5 s): something it depends on (database, Redis, Elasticsearch, mail server) is not available."
+
+  - name: HighErrorRate counts user requests only, not /actuator calls
+    interval: 15s
+    input_series:
+      # order-service: 6 of 60 requests per 15 s fail = 10 %
+      - series: 'http_server_requests_seconds_count{job="grocery-services", service="order-service", status="500", uri="/api/v1/orders"}'
+        values: '0+6x40'
+      - series: 'http_server_requests_seconds_count{job="grocery-services", service="order-service", status="200", uri="/api/v1/orders"}'
+        values: '0+54x40'
+      # cart-service: half of the health checks fail, but every user request works -> no alert
+      - series: 'http_server_requests_seconds_count{job="grocery-services", service="cart-service", status="503", uri="/actuator/health"}'
+        values: '0+10x40'
+      - series: 'http_server_requests_seconds_count{job="grocery-services", service="cart-service", status="200", uri="/api/v1/cart"}'
+        values: '0+10x40'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: HighErrorRate
+        exp_alerts:
+          - exp_labels: { severity: critical, service: order-service }
+            exp_annotations:
+              summary: "order-service answers 10% of its requests with an error (5xx)"
+              description: "More than 5 % of the requests to order-service failed with a server error during the last 5 minutes. Grafana: Grocery service details -> Errors by endpoint; the ERROR lines of the service in Grafana Loki."
+
+  - name: KafkaConsumerNoProgress fires for a stuck saga group after 2 minutes, not for a busy or a never-committed group
+    interval: 15s
+    input_series:
+      # order-service: 3 events wait on grocery.payment.events from 30 s on, and its offset never moves = stuck
+      - series: 'kafka_consumergroup_lag{job="kafka-exporter", consumergroup="order-service", topic="grocery.payment.events", partition="0"}'
+        values: '0 0 3x20'
+      - series: 'kafka_consumergroup_current_offset{job="kafka-exporter", consumergroup="order-service", topic="grocery.payment.events", partition="0"}'
+        values: '10x22'
+      # inventory-service: always 3 events behind, but it keeps committing = busy, not stuck
+      - series: 'kafka_consumergroup_lag{job="kafka-exporter", consumergroup="inventory-service", topic="grocery.order.events", partition="0"}'
+        values: '3x22'
+      - series: 'kafka_consumergroup_current_offset{job="kafka-exporter", consumergroup="inventory-service", topic="grocery.order.events", partition="0"}'
+        values: '10+1x22'
+      # cart-service never committed on this partition: the exporter reports -1, which is not "events waiting"
+      - series: 'kafka_consumergroup_lag{job="kafka-exporter", consumergroup="cart-service", topic="grocery.platform.events", partition="1"}'
+        values: '-1x22'
+      - series: 'kafka_consumergroup_current_offset{job="kafka-exporter", consumergroup="cart-service", topic="grocery.platform.events", partition="1"}'
+        values: '-1x22'
+    alert_rule_test:
+      - eval_time: 2m15s                         # stuck for 1 m 45 s: only pending
+        alertname: KafkaConsumerNoProgress
+        exp_alerts: []
+      - eval_time: 2m45s                         # stuck for 2 m 15 s: firing
+        alertname: KafkaConsumerNoProgress
+        exp_alerts:
+          - exp_labels: { severity: critical, max_wait: 2m, consumergroup: order-service, topic: grocery.payment.events, service: order-service }
+            exp_annotations:
+              summary: "order-service stopped reading grocery.payment.events (events waiting: 3)"
+              description: "3 events wait on grocery.payment.events and the consumer group order-service committed nothing for 2 minutes. Customers wait for these events (orders stay in their current state). Is order-service running? Its log shows the failing event and the retries; Grafana: Grocery events."
+
+  - name: KafkaConsumerNoProgress gives reports 15 minutes
+    interval: 15s
+    input_series:
+      - series: 'kafka_consumergroup_lag{job="kafka-exporter", consumergroup="report-service", topic="grocery.order.events", partition="2"}'
+        values: '0 5x80'
+      - series: 'kafka_consumergroup_current_offset{job="kafka-exporter", consumergroup="report-service", topic="grocery.order.events", partition="2"}'
+        values: '40x81'
+    alert_rule_test:
+      - eval_time: 10m                           # stuck for almost 10 minutes: still fine for a report
+        alertname: KafkaConsumerNoProgress
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: KafkaConsumerNoProgress
+        exp_alerts:
+          - exp_labels: { severity: warning, max_wait: 15m, consumergroup: report-service, topic: grocery.order.events, service: report-service }
+            exp_annotations:
+              summary: "report-service stopped reading grocery.order.events (events waiting: 5)"
+              description: "5 events wait on grocery.order.events and the consumer group report-service committed nothing for 15 minutes: reports or the audit log are getting old. Is report-service running? Its log shows the failing event; Grafana: Grocery events."
+
+  - name: KafkaConsumerLagGrowing fires when the lag stays above 100 and keeps growing
+    interval: 15s
+    input_series:
+      # 10 more events waiting every 15 s, while the group still commits (slow, not stuck)
+      - series: 'kafka_consumergroup_lag{job="kafka-exporter", consumergroup="notification-service", topic="grocery.order.events", partition="0"}'
+        values: '0+10x120'
+      - series: 'kafka_consumergroup_current_offset{job="kafka-exporter", consumergroup="notification-service", topic="grocery.order.events", partition="0"}'
+        values: '0+5x120'
+    alert_rule_test:
+      - eval_time: 8m                            # above 100 since about 3 minutes: pending
+        alertname: KafkaConsumerLagGrowing
+        exp_alerts: []
+      - eval_time: 14m
+        alertname: KafkaConsumerLagGrowing
+        exp_alerts:
+          - exp_labels: { severity: warning, consumergroup: notification-service, topic: grocery.order.events, service: notification-service }
+            exp_annotations:
+              summary: "notification-service falls behind on grocery.order.events (560 events waiting)"
+              description: "The lag of notification-service on grocery.order.events is above 100 and still growing: events arrive faster than notification-service handles them. Look for slow handlers (Grafana: Grocery service details -> Events) or a slow database; more partitions + instances help only if the handler itself is fine."
+
+  - name: KafkaConsumerRebalancing ignores the one rebalance at start, fires on repeated ones
+    interval: 1m
+    input_series:
+      - series: 'kafka_consumer_coordinator_rebalance_total{job="grocery-services", service="order-service", client_id="consumer-order-service-1"}'
+        values: '1 2 3 4 5 6x10'                 # rejoined 5 times in 5 minutes
+      - series: 'kafka_consumer_coordinator_rebalance_total{job="grocery-services", service="cart-service", client_id="consumer-cart-service-1"}'
+        values: '1x15'                           # the normal single rebalance when the service started
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: KafkaConsumerRebalancing
+        exp_alerts:
+          - exp_labels: { severity: warning, service: order-service, client_id: consumer-order-service-1 }
+            exp_annotations:
+              summary: "order-service: Kafka consumer consumer-order-service-1 keeps rebalancing"
+              description: "The consumer rebalanced more than 3 times in 15 minutes: it keeps leaving and rejoining its group, and each time the whole group pauses. Usually an event takes too long to handle (more than max.poll.interval.ms, 5 minutes), or the service restarts. Look at the service log around the rebalances."
+
+  - name: DebeziumNotReadingBinlog counts running connectors that are not connected (missing metrics count too)
+    interval: 15s
+    input_series:
+      # 8 running connectors; 5 are connected, 1 reports Connected = 0 and 2 have no streaming metrics at all
+      # (Debezium restarts them every 10 s, e.g. after "Too many connections" from MySQL)
+      - series: 'kafka_connect_connector_tasks{job="kafka-connect", connector="auth-outbox-connector", state="running"}'
+        values: '1x20'
+      - series: 'kafka_connect_connector_tasks{job="kafka-connect", connector="store-outbox-connector", state="running"}'
+        values: '1x20'
+      - series: 'kafka_connect_connector_tasks{job="kafka-connect", connector="inventory-outbox-connector", state="running"}'
+        values: '1x20'
+      - series: 'kafka_connect_connector_tasks{job="kafka-connect", connector="order-outbox-connector", state="running"}'
+        values: '1x20'
+      - series: 'kafka_connect_connector_tasks{job="kafka-connect", connector="payment-outbox-connector", state="running"}'
+        values: '1x20'
+      - series: 'kafka_connect_connector_tasks{job="kafka-connect", connector="delivery-outbox-connector", state="running"}'
+        values: '1x20'
+      - series: 'kafka_connect_connector_tasks{job="kafka-connect", connector="platform-outbox-connector", state="running"}'
+        values: '1x20'
+      - series: 'kafka_connect_connector_tasks{job="kafka-connect", connector="product-cdc-connector", state="running"}'
+        values: '1x20'
+      - series: 'debezium_mysql_connected{job="kafka-connect", server="store-outbox"}'
+        values: '1x20'
+      - series: 'debezium_mysql_connected{job="kafka-connect", server="inventory-outbox"}'
+        values: '1x20'
+      - series: 'debezium_mysql_connected{job="kafka-connect", server="order-outbox"}'
+        values: '1x20'
+      - series: 'debezium_mysql_connected{job="kafka-connect", server="payment-outbox"}'
+        values: '1x20'
+      - series: 'debezium_mysql_connected{job="kafka-connect", server="platform-outbox"}'
+        values: '1x20'
+      - series: 'debezium_mysql_connected{job="kafka-connect", server="auth-outbox"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: DebeziumNotReadingBinlog
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: DebeziumNotReadingBinlog
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "3 Debezium connector(s) are not reading the MySQL binlog"
+              description: "For 3 minutes 3 running connector(s) have not been connected to the MySQL binlog: their services' events wait in the outbox table (nothing is lost; they are published once the connector reads again). Grafana: Grocery events -> Debezium shows which; docker logs grocery-kafka-connect shows why (e.g. 'Too many connections', access denied)."
+
+  - name: a failed or paused connector, and Kafka Connect itself being down
+    interval: 15s
+    input_series:
+      - series: 'kafka_connect_connector_status{job="kafka-connect", connector="order-outbox-connector", status="paused"}'
+        values: '1x20'
+      - series: 'kafka_connect_connector_status{job="kafka-connect", connector="store-outbox-connector", status="running"}'
+        values: '1x20'
+      - series: 'kafka_connect_connector_tasks{job="kafka-connect", connector="payment-outbox-connector", state="failed"}'
+        values: '0 1x20'
+      - series: 'up{job="kafka-connect", instance="kafka-connect:9404"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: KafkaConnectorNotRunning
+        exp_alerts:
+          - exp_labels: { severity: critical, connector: order-outbox-connector, status: paused }
+            exp_annotations:
+              summary: "Connector order-outbox-connector is paused"
+              description: "The connector order-outbox-connector is paused, so its events are not published. GET http://localhost:8083/connectors/order-outbox-connector/status shows the error; restart it with POST .../restart?includeTasks=true after fixing the cause (docs/resilience.md)."
+      - eval_time: 3m
+        alertname: KafkaConnectTaskFailed
+        exp_alerts:
+          - exp_labels: { severity: critical, connector: payment-outbox-connector }
+            exp_annotations:
+              summary: "A task of connector payment-outbox-connector failed"
+              description: "The task stopped with an error, so the connector publishes nothing. GET http://localhost:8083/connectors/payment-outbox-connector/status shows the stack trace; restart with POST .../restart?includeTasks=true&onlyFailed=true after fixing the cause."
+      - eval_time: 3m
+        alertname: KafkaConnectDown
+        exp_alerts:
+          - exp_labels: { severity: critical, job: kafka-connect, instance: "kafka-connect:9404" }
+            exp_annotations:
+              summary: "Kafka Connect is down: no events are published"
+              description: "Prometheus cannot reach Kafka Connect (kafka-connect:9404) for 2 minutes. No outbox row becomes an event until it is back; nothing is lost (the rows wait in MySQL, the binlog is kept 7 days). docker logs grocery-kafka-connect; docs/resilience.md."
+
+  - name: one database connection timeout is enough for DatabaseConnectionTimeouts
+    interval: 15s
+    input_series:
+      - series: 'hikaricp_connections_timeout_total{job="grocery-services", service="payment-service", pool="HikariPool-1"}'
+        values: '0 0 0 1x10'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: DatabaseConnectionTimeouts
+        exp_alerts:
+          - exp_labels: { severity: critical, service: payment-service }
+            exp_annotations:
+              summary: "payment-service: requests failed because no database connection was free"
+              description: "In the last 5 minutes payment-service waited 5 s for a database connection and gave up: those requests were answered 503 (busy). Look for slow queries or long transactions, or a MySQL problem."
+
+  - name: MySQLDown after 1 minute; connections near the limit
+    interval: 15s
+    input_series:
+      - series: 'mysql_up{job="mysql", instance="mysqld-exporter:9104"}'
+        values: '1 1 0x10'                       # MySQL unreachable from 30 s on
+      - series: 'mysql_global_status_threads_connected{job="mysql", instance="mysqld-exporter:9104"}'
+        values: '240x5 270x30'                   # 80% (not above) for 75 s, then 90%
+      - series: 'mysql_global_variables_max_connections{job="mysql", instance="mysqld-exporter:9104"}'
+        values: '300x35'
+    alert_rule_test:
+      - eval_time: 75s                           # down for 45 s: only "pending"
+        alertname: MySQLDown
+        exp_alerts: []
+      - eval_time: 105s
+        alertname: MySQLDown
+        exp_alerts:
+          - exp_labels: { severity: critical, job: mysql, instance: "mysqld-exporter:9104" }
+            exp_annotations:
+              summary: "MySQL is down"
+              description: "The MySQL exporter cannot reach MySQL for 1 minute. Every request that reads or writes data fails, and Debezium publishes no events (they wait in the outbox tables, nothing is lost). docker logs grocery-mysql; start it again with docker compose -f infrastructure/docker-compose.yml up -d mysql."
+      - eval_time: 5m                            # 90% for 3m30s: still pending
+        alertname: MySQLConnectionsNearLimit
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: MySQLConnectionsNearLimit
+        exp_alerts:
+          - exp_labels: { severity: warning, job: mysql, instance: "mysqld-exporter:9104" }
+            exp_annotations:
+              summary: "MySQL uses 90% of its connections"
+              description: "More than 80% of max_connections have been open for 5 minutes. When all are used, new connections fail with 'Too many connections': services cannot start and Debezium stops reading the binlog. Grafana: Grocery infrastructure -> MySQL -> Connections per service shows who holds them."
+  - name: slow queries that keep coming fire MySQLSlowQueries after 15 minutes
+    interval: 1m
+    input_series:
+      - series: 'mysql_global_status_slow_queries{job="mysql", instance="mysqld-exporter:9104"}'
+        values: '0+1x30'                         # one more slow query every minute
+    alert_rule_test:
+      - eval_time: 15m                           # too many since about minute 3: still pending
+        alertname: MySQLSlowQueries
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: MySQLSlowQueries
+        exp_alerts:
+          - exp_labels: { severity: warning, job: mysql, instance: "mysqld-exporter:9104" }
+            exp_annotations:
+              summary: "MySQL keeps running queries that take over 1 s"
+              description: "For 15 minutes, more than 2 queries per 5 minutes took over 1 s. Slow queries hold database connections and make requests slow. The slow log has each one with its time: docker exec grocery-mysql tail -n 40 /var/lib/mysql/slow.log; usually an index is missing (run EXPLAIN on the query). Nothing new in the slow log? Then Kafka Connect keeps restarting its connectors (each ended binlog connection counts as slow): see the Debezium alerts."
+
+  - name: a burst of slow queries is not an alert (Kafka Connect restarting adds 8 at once)
+    interval: 1m
+    input_series:
+      - series: 'mysql_global_status_slow_queries{job="mysql", instance="mysqld-exporter:9104"}'
+        values: '0x5 8x25'                       # +8 at minute 6, then nothing
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: MySQLSlowQueries
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: MySQLSlowQueries
+        exp_alerts: []
+
+  - name: Redis down, near its memory limit, evicting keys, refusing connections
+    interval: 15s
+    input_series:
+      - series: 'redis_up{job="redis", instance="redis-exporter:9121"}'
+        values: '1 1 0x10'
+      - series: 'redis_memory_used_bytes{job="redis", instance="redis-exporter:9121"}'
+        values: '90x30'
+      - series: 'redis_memory_max_bytes{job="redis", instance="redis-exporter:9121"}'
+        values: '100x30'                         # 90% of the limit
+      - series: 'redis_evicted_keys_total{job="redis", instance="redis-exporter:9121"}'
+        values: '0 0 0 25x10'
+      - series: 'redis_rejected_connections_total{job="redis", instance="redis-exporter:9121"}'
+        values: '0 0 0 1x10'
+    alert_rule_test:
+      - eval_time: 105s
+        alertname: RedisDown
+        exp_alerts:
+          - exp_labels: { severity: critical, job: redis, instance: "redis-exporter:9121" }
+            exp_annotations:
+              summary: "Redis is down"
+              description: "The Redis exporter cannot reach Redis for 1 minute. The gateway lets requests through without rate limits (and logs an error for each), and delivery-service cannot see which partners are online, so new orders get no delivery partner. docker logs grocery-redis."
+      - eval_time: 6m
+        alertname: RedisMemoryHigh
+        exp_alerts:
+          - exp_labels: { severity: warning, job: redis, instance: "redis-exporter:9121" }
+            exp_annotations:
+              summary: "Redis uses 90% of its memory limit"
+              description: "Redis is close to maxmemory. At the limit it starts removing keys (RedisEvictingKeys). Grafana: Grocery infrastructure -> Redis -> Keys shows what grows."
+      - eval_time: 2m
+        alertname: RedisEvictingKeys
+        exp_alerts:
+          - exp_labels: { severity: warning, job: redis, instance: "redis-exporter:9121" }
+            exp_annotations:
+              summary: "Redis removes keys because its memory is full"
+              description: "Redis reached maxmemory and dropped keys to make room. Here Redis keeps state, not a cache: a dropped key can make a delivery partner look offline or reset a rate limit. Raise maxmemory or find the keys that grow."
+      - eval_time: 2m
+        alertname: RedisRejectedConnections
+        exp_alerts:
+          - exp_labels: { severity: warning, job: redis, instance: "redis-exporter:9121" }
+            exp_annotations:
+              summary: "Redis refused new connections"
+              description: "Redis reached maxclients and refused connections: the gateway or delivery-service got errors. Grafana: Grocery infrastructure -> Redis -> Clients."
+
+  - name: without a memory limit (maxmemory 0) RedisMemoryHigh never fires
+    interval: 1m
+    input_series:
+      - series: 'redis_memory_used_bytes{job="redis", instance="redis-exporter:9121"}'
+        values: '900000000x10'
+      - series: 'redis_memory_max_bytes{job="redis", instance="redis-exporter:9121"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: RedisMemoryHigh
+        exp_alerts: []
+
+  - name: ElasticsearchDown when the exporter runs but gets no cluster health; not when the exporter is down
+    interval: 15s
+    input_series:
+      - series: 'up{job="elasticsearch", instance="elasticsearch-exporter:9114", tool="elasticsearch-exporter"}'
+        values: '1x40'
+      - series: 'elasticsearch_cluster_health_status{job="elasticsearch", instance="elasticsearch-exporter:9114", cluster="docker-cluster", color="green"}'
+        values: '1 1 stale'                      # Elasticsearch unreachable from 30 s on: the value disappears
+    alert_rule_test:
+      - eval_time: 20s
+        alertname: ElasticsearchDown
+        exp_alerts: []
+      - eval_time: 75s                           # missing for 45 s: only "pending"
+        alertname: ElasticsearchDown
+        exp_alerts: []
+      - eval_time: 105s
+        alertname: ElasticsearchDown
+        exp_alerts:
+          - exp_labels: { severity: critical, job: elasticsearch }
+            exp_annotations:
+              summary: "Elasticsearch is down"
+              description: "The Elasticsearch exporter cannot read the cluster health for 1 minute. Product search and product pages fail; product changes still work (MySQL) and wait in Kafka until Elasticsearch is back. docker logs grocery-elasticsearch."
+
+  - name: a stopped exporter is MonitoringToolDown, not ElasticsearchDown
+    interval: 1m
+    input_series:
+      - series: 'up{job="elasticsearch", instance="elasticsearch-exporter:9114", tool="elasticsearch-exporter"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: ElasticsearchDown
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: MonitoringToolDown
+        exp_alerts:
+          - exp_labels: { severity: warning, job: elasticsearch, instance: "elasticsearch-exporter:9114", tool: elasticsearch-exporter }
+            exp_annotations:
+              summary: "elasticsearch-exporter is down"
+              description: "Prometheus cannot reach elasticsearch-exporter: traces, logs, dashboards, alert emails or the metrics of a data store may be missing while it is down (for an exporter: the store itself may be fine)."
+
+  - name: Elasticsearch red, yellow, disk and rejected requests
+    interval: 1m
+    input_series:
+      - series: 'elasticsearch_cluster_health_status{job="elasticsearch", cluster="docker-cluster", color="red"}'
+        values: '0 1x12'
+      - series: 'elasticsearch_cluster_health_status{job="elasticsearch", cluster="docker-cluster", color="yellow"}'
+        values: '1x12'
+      - series: 'elasticsearch_filesystem_data_available_bytes{job="elasticsearch", name="es1", path="/usr/share/elasticsearch/data"}'
+        values: '100x12'
+      - series: 'elasticsearch_filesystem_data_size_bytes{job="elasticsearch", name="es1", path="/usr/share/elasticsearch/data"}'
+        values: '1000x12'                        # 90% full
+      - series: 'elasticsearch_thread_pool_rejected_count{job="elasticsearch", name="es1", type="write"}'
+        values: '0 0 3x10'
+      - series: 'elasticsearch_thread_pool_rejected_count{job="elasticsearch", name="es1", type="get"}'
+        values: '0 0 3x10'                       # other pools are left out
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: ElasticsearchClusterRed
+        exp_alerts:
+          - exp_labels: { severity: critical, job: elasticsearch, cluster: docker-cluster, color: red }
+            exp_annotations:
+              summary: "Elasticsearch cluster is RED"
+              description: "At least one primary shard is not available: searches on that index fail or miss products. GET http://localhost:9200/_cluster/allocation/explain tells why."
+      - eval_time: 9m                            # yellow for 9 minutes: still pending
+        alertname: ElasticsearchClusterYellow
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: ElasticsearchClusterYellow
+        exp_alerts:
+          - exp_labels: { severity: warning, job: elasticsearch, cluster: docker-cluster, color: yellow }
+            exp_annotations:
+              summary: "Elasticsearch cluster is YELLOW"
+              description: "All data is searchable, but some replica shards have no node: one more node failure can lose an index. On a single node (local) this means an index asks for replicas; GET http://localhost:9200/_cat/shards?v shows the UNASSIGNED ones."
+      - eval_time: 11m
+        alertname: ElasticsearchDiskHigh
+        exp_alerts:
+          - exp_labels: { severity: warning, job: elasticsearch, name: es1, path: /usr/share/elasticsearch/data }
+            exp_annotations:
+              summary: "Elasticsearch's disk is 90% full"
+              description: "Above 85% Elasticsearch stops placing new shards on the node, and at 95% it makes the indexes read-only: product changes are no longer indexed. (These limits are switched off locally, so a full laptop disk does not block development.)"
+      - eval_time: 3m
+        alertname: ElasticsearchRejectedRequests
+        exp_alerts:
+          - exp_labels: { severity: warning, type: write }
+            exp_annotations:
+              summary: "Elasticsearch rejected write requests"
+              description: "The write queue of Elasticsearch was full, so requests were refused: searches answered with an error, or product-read-service had to retry indexing. Elasticsearch is overloaded."
+
+  - name: Elasticsearch heap must stay high, a heap that drops after garbage collection is fine
+    interval: 1m
+    input_series:
+      - series: 'elasticsearch_jvm_memory_used_bytes{job="elasticsearch", name="es1", area="heap"}'
+        values: '900x20'                         # 90% for 20 minutes
+      - series: 'elasticsearch_jvm_memory_max_bytes{job="elasticsearch", name="es1", area="heap"}'
+        values: '1000x20'
+      - series: 'elasticsearch_jvm_memory_used_bytes{job="elasticsearch", name="es2", area="heap"}'
+        values: '900 500 900 500 900 500 900 500 900 500 900 500 900 500 900 500 900 500 900 500 900'
+      - series: 'elasticsearch_jvm_memory_max_bytes{job="elasticsearch", name="es2", area="heap"}'
+        values: '1000x20'
+    alert_rule_test:
+      - eval_time: 17m
+        alertname: ElasticsearchHeapHigh
+        exp_alerts:
+          - exp_labels: { severity: warning, job: elasticsearch, name: es1, area: heap }
+            exp_annotations:
+              summary: "Elasticsearch uses 90% of its heap"
+              description: "The heap stayed above 85% for 15 minutes, even after garbage collections. Searches get slow and Elasticsearch may refuse requests (circuit breakers). Give it more heap (ES_JAVA_OPTS) or look for very large queries."
+
+  - name: KafkaDown after 1 minute without a connection to the broker
+    interval: 15s
+    input_series:
+      - series: 'probe_success{job="kafka-broker", instance="kafka:29092"}'
+        values: '1 1 0x10'                       # no connection from 30 s on
+    alert_rule_test:
+      - eval_time: 75s                           # 45 s: only "pending"
+        alertname: KafkaDown
+        exp_alerts: []
+      - eval_time: 105s
+        alertname: KafkaDown
+        exp_alerts:
+          - exp_labels: { severity: critical, job: kafka-broker, instance: "kafka:29092" }
+            exp_annotations:
+              summary: "Kafka is down"
+              description: "The Kafka broker does not accept connections for 1 minute. No event is published or read: new events wait in the outbox tables and the consumers pause, nothing is lost, and everything continues by itself when Kafka is back. docker logs grocery-kafka; start it again with docker compose -f infrastructure/docker-compose.yml up -d kafka."
+
+  # SLOs (alerts/slo-rules.yml). 600 requests per minute through the gateway; one value per minute.
+  - name: 20 % server errors after a healthy hour fire ErrorBudgetBurningFast once 7.2 % of the last hour failed
+    interval: 1m
+    input_series:
+      - series: 'spring_cloud_gateway_requests_seconds_count{routeId="order-service", httpStatusCode="200"}'
+        values: '0+600x60 36480+480x40'          # 600 OK per minute; from minute 61 only 480
+      - series: 'spring_cloud_gateway_requests_seconds_count{routeId="order-service", httpStatusCode="503"}'
+        values: '0x60 120+120x40'                # from minute 61: 120 errors per minute (20 %)
+    alert_rule_test:
+      - eval_time: 78m                           # 18 min of errors = 6 % of the hour: not yet
+        alertname: ErrorBudgetBurningFast
+        exp_alerts: []
+      - eval_time: 86m                           # 26 min = 8.7 % of the hour
+        alertname: ErrorBudgetBurningFast
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "Users get server errors: more than 7.2 % of the requests in the last hour"
+              description: "More than 7.2 % of the requests through the gateway failed with a 5xx in the last hour and they still fail. At this rate the availability SLO (99.5 % per 7 days) is used up in about half a day. Grafana: Grocery SLOs -> errors by route shows which service; its own alerts (ServiceDown, HighErrorRate ...) say why."
+      - eval_time: 86m                           # the "6 hours" hold only 86 minutes of data here, 30 % of them failed:
+        alertname: ErrorBudgetBurningSlowly      # the slow alert fires too; Alertmanager's inhibit rule sends only the fast one
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "More than 3 % of the requests failed with a server error in the last 6 hours"
+              description: "More than 3 % of the requests through the gateway failed with a 5xx for 6 hours and they still fail. At this rate the availability SLO (99.5 % per 7 days) is used up in about a day. Grafana: Grocery SLOs -> errors by route."
+  - name: 5 % server errors after 6 healthy hours fire only the slow alert, once 3 % of 6 hours failed
+    interval: 1m
+    input_series:
+      - series: 'spring_cloud_gateway_requests_seconds_count{routeId="cart-service", httpStatusCode="200"}'
+        values: '0+600x360 216570+570x300'       # from minute 361: 570 OK per minute
+      - series: 'spring_cloud_gateway_requests_seconds_count{routeId="cart-service", httpStatusCode="500"}'
+        values: '0x360 30+30x300'                # and 30 errors (5 %)
+    alert_rule_test:
+      - eval_time: 9h                            # 3 h of errors = 2.5 % of 6 h
+        alertname: ErrorBudgetBurningSlowly
+        exp_alerts: []
+      - eval_time: 10h30m                        # 4.5 h = 3.75 %
+        alertname: ErrorBudgetBurningSlowly
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "More than 3 % of the requests failed with a server error in the last 6 hours"
+              description: "More than 3 % of the requests through the gateway failed with a 5xx for 6 hours and they still fail. At this rate the availability SLO (99.5 % per 7 days) is used up in about a day. Grafana: Grocery SLOs -> errors by route."
+      - eval_time: 10h30m                        # 5 % is below the 7.2 % of the fast alert
+        alertname: ErrorBudgetBurningFast
+        exp_alerts: []
+  - name: 10 % slow requests fire LatencyBudgetBurning; slow AI chat answers do not count
+    interval: 1m
+    input_series:
+      - series: 'spring_cloud_gateway_requests_seconds_count{routeId="product-read-service", httpStatusCode="200"}'
+        values: '0+600x660'
+      - series: 'spring_cloud_gateway_requests_seconds_bucket{routeId="product-read-service", httpStatusCode="200", le="+Inf"}'
+        values: '0+600x660'
+      - series: 'spring_cloud_gateway_requests_seconds_bucket{routeId="product-read-service", httpStatusCode="200", le="1.0"}'
+        values: '0+600x360 216540+540x300'       # from minute 361: 60 of 600 per minute take longer than 1 s
+      - series: 'spring_cloud_gateway_requests_seconds_count{routeId="mcp-client-service-chat", httpStatusCode="200"}'
+        values: '0+10x660'                       # the chat: every answer takes seconds
+      - series: 'spring_cloud_gateway_requests_seconds_bucket{routeId="mcp-client-service-chat", httpStatusCode="200", le="+Inf"}'
+        values: '0+10x660'
+      - series: 'spring_cloud_gateway_requests_seconds_bucket{routeId="mcp-client-service-chat", httpStatusCode="200", le="1.0"}'
+        values: '0x660'
+    alert_rule_test:
+      - eval_time: 6h                            # only slow chat answers so far: no alert
+        alertname: LatencyBudgetBurning
+        exp_alerts: []
+      - eval_time: 9h                            # 3 h of slow requests = 5 % of 6 h
+        alertname: LatencyBudgetBurning
+        exp_alerts: []
+      - eval_time: 10h30m                        # 4.5 h = 7.5 %
+        alertname: LatencyBudgetBurning
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "More than 6 % of the requests took longer than 1 s in the last 6 hours"
+              description: "More than 6 % of the requests through the gateway (not counting the AI chat and the tracking stream) took longer than 1 second for 6 hours, and still do. The latency SLO is 99 % within 1 s per 7 days. Grafana: Grocery SLOs -> slow requests by route, then Grocery service details for that service."
+  - name: a quiet night - 2 errors out of 5 requests in an hour - is no SLO alert
+    interval: 1m
+    input_series:
+      - series: 'spring_cloud_gateway_requests_seconds_count{routeId="order-service", httpStatusCode="200"}'
+        values: '0x30 1 1 2 2 3x30'
+      - series: 'spring_cloud_gateway_requests_seconds_count{routeId="order-service", httpStatusCode="503"}'
+        values: '0x40 1 2x25'
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: ErrorBudgetBurningFast
+        exp_alerts: []
+  - name: too many series for 15 minutes fire TooManyMetricSeries
+    interval: 1m
+    input_series:
+      - series: 'prometheus_tsdb_head_series{job="monitoring", instance="localhost:9090", tool="prometheus"}'
+        values: '36000x5 250000x20'               # from minute 6 a label explodes
+    alert_rule_test:
+      - eval_time: 15m                            # 9 minutes: pending
+        alertname: TooManyMetricSeries
+        exp_alerts: []
+      - eval_time: 22m
+        alertname: TooManyMetricSeries
+        exp_alerts:
+          - exp_labels: { severity: warning, job: monitoring, instance: "localhost:9090", tool: prometheus }
+            exp_annotations:
+              summary: "Prometheus holds 250000 series"
+              description: "More than 200,000 time series (normally about 36,000): a label probably gets a new value for every request (an id, a user, a raw URL). Run scripts/check-metrics-cardinality.ps1 to see which metric and label grow."
+  - name: WebThreadsBusy fires for a full thread pool, never for a service on virtual threads (Tomcat reports -1)
+    interval: 1m
+    input_series:
+      - series: 'tomcat_threads_busy_threads{job="grocery-services", service="cart-service", name="http-nio-8107"}'
+        values: '195x10'
+      - series: 'tomcat_threads_config_max_threads{job="grocery-services", service="cart-service", name="http-nio-8107"}'
+        values: '200x10'
+      - series: 'tomcat_threads_busy_threads{job="grocery-services", service="product-read-service", name="http-nio-8105"}'
+        values: '-1x10'
+      - series: 'tomcat_threads_config_max_threads{job="grocery-services", service="product-read-service", name="http-nio-8105"}'
+        values: '-1x10'
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: WebThreadsBusy
+        exp_alerts:
+          - exp_labels: { severity: warning, service: cart-service }
+            exp_annotations:
+              summary: "cart-service: 97.5% of the web threads are busy"
+              description: "Almost all request threads of cart-service are in use: new requests have to wait. Usually something it calls (database, another service) is slow."

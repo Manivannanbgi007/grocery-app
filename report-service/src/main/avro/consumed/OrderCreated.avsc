@@ -1,0 +1,103 @@
+{
+  "type": "record",
+  "name": "OrderCreated",
+  "namespace": "com.grocery.events.order",
+  "doc": "A customer placed an order (status PENDING). Starts the saga: inventory reserves the stock, payment-service creates the payment, cart-service empties the cart. Producer: order-service. Topic: grocery.order.events, key = orderId.",
+  "fields": [
+    {
+      "name": "eventId",
+      "type": "string",
+      "doc": "Unique id of this event (UUID). Consumers use it to skip duplicates."
+    },
+    {
+      "name": "occurredAt",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      }
+    },
+    {
+      "name": "orderId",
+      "type": "long"
+    },
+    {
+      "name": "customerUserId",
+      "type": "long"
+    },
+    {
+      "name": "storeId",
+      "type": "long"
+    },
+    {
+      "name": "items",
+      "type": {
+        "type": "array",
+        "items": {
+          "type": "record",
+          "name": "OrderLine",
+          "fields": [
+            {
+              "name": "productId",
+              "type": "long"
+            },
+            {
+              "name": "productName",
+              "type": "string"
+            },
+            {
+              "name": "quantity",
+              "type": "int"
+            },
+            {
+              "name": "unitPrice",
+              "type": "string",
+              "doc": "Price of one unit as decimal text, e.g. \"36.00\""
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "itemsTotal",
+      "type": "string",
+      "doc": "Amount as decimal text, e.g. \"201.00\" (exact, readable in Kafka UI)"
+    },
+    {
+      "name": "couponCode",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "name": "couponDiscount",
+      "type": "string",
+      "doc": "Amount as decimal text, e.g. \"201.00\" (exact, readable in Kafka UI)"
+    },
+    {
+      "name": "deliveryFee",
+      "type": "string",
+      "doc": "Amount as decimal text, e.g. \"201.00\" (exact, readable in Kafka UI)"
+    },
+    {
+      "name": "totalAmount",
+      "type": "string",
+      "doc": "What the customer pays, as decimal text"
+    },
+    {
+      "name": "paymentMethod",
+      "type": "string",
+      "doc": "COD or ONLINE"
+    },
+    {
+      "name": "commissionPercentage",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null,
+      "doc": "Platform commission of the store in percent, e.g. \"10.00\" (null for orders before Phase 11)"
+    }
+  ]
+}

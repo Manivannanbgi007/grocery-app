@@ -1,0 +1,73 @@
+# product-read-service: Deployment (the running pods) + Service (a stable name inside the cluster: http://product-read-service)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product-read-service
+  labels:
+    app: product-read-service
+    app.kubernetes.io/part-of: grocery
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: product-read-service
+  template:
+    metadata:
+      labels:
+        app: product-read-service
+        app.kubernetes.io/part-of: grocery
+      annotations:                       # a Prometheus in the cluster finds the metrics through these
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /actuator/prometheus
+        prometheus.io/port: "8080"
+    spec:
+      containers:
+        - name: product-read-service
+          image: grocery/product-read-service:0.0.1
+          imagePullPolicy: IfNotPresent      # images are built locally and loaded into the cluster
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: grocery-config         # shared: profile, MySQL host, Kafka, Schema Registry, Redis, tracing ...
+          resources:
+            requests:
+              cpu: 100m
+              memory: 384Mi
+            limits:
+              memory: 640Mi                  # the JVM uses 75 % of it as heap (-XX:MaxRAMPercentage=75 in the Dockerfile)
+          # Spring Boot's health groups (management.endpoint.health.probes.enabled=true)
+          startupProbe:                      # give the app up to 3 minutes to start (Flyway, Kafka ...)
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 5
+            failureThreshold: 36
+          livenessProbe:                     # stuck? -> restart the container
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:                    # not ready (starting, shutting down)? -> no traffic from the Service
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 5
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: product-read-service
+  labels:
+    app: product-read-service
+    app.kubernetes.io/part-of: grocery
+spec:
+  selector:
+    app: product-read-service
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

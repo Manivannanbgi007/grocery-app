@@ -1,0 +1,16 @@
+# Metrics Server: the CPU and memory use of every pod. "kubectl top pods" and the HorizontalPodAutoscalers read it.
+# Installed by scripts\k8s-create-clusters.ps1:  kubectl apply -k deployment/kubernetes/addons/metrics-server
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.9.0/components.yaml
+patches:
+  # kind's kubelets use self-signed certificates: accept them (local clusters only, never in production)
+  - target:
+      kind: Deployment
+      name: metrics-server
+      namespace: kube-system
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --kubelet-insecure-tls

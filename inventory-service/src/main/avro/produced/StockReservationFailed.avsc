@@ -1,0 +1,56 @@
+{
+  "type": "record",
+  "name": "StockReservationFailed",
+  "namespace": "com.grocery.events.inventory",
+  "doc": "At least one item does not have enough stock, so NOTHING was reserved. order-service cancels the order. Producer: inventory-service. Topic: grocery.inventory.events, key = orderId.",
+  "fields": [
+    {
+      "name": "eventId",
+      "type": "string",
+      "doc": "Unique id of this event (UUID). Consumers use it to skip duplicates."
+    },
+    {
+      "name": "occurredAt",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      }
+    },
+    {
+      "name": "orderId",
+      "type": "long"
+    },
+    {
+      "name": "storeId",
+      "type": "long"
+    },
+    {
+      "name": "reason",
+      "type": "string"
+    },
+    {
+      "name": "items",
+      "type": {
+        "type": "array",
+        "items": {
+          "type": "record",
+          "name": "UnavailableItem",
+          "fields": [
+            {
+              "name": "productId",
+              "type": "long"
+            },
+            {
+              "name": "requestedQuantity",
+              "type": "int"
+            },
+            {
+              "name": "availableQuantity",
+              "type": "int"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+# Grafana loads this on startup: Prometheus (metrics, the default) and Alertmanager (firing alerts and silences).
+# Logs and traces: loki-and-jaeger.yml. (Not named prometheus.yml: editors would check it as a Prometheus config.)
+apiVersion: 1
+
+# Re-created on every start with the fixed uid below. (Older Grafana volumes have it with a random uid, which
+# provisioning cannot change in place.)
+deleteDatasources:
+  - name: Prometheus
+    orgId: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus                    # the dashboards refer to this uid
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      httpMethod: POST
+      manageAlerts: true               # Grafana -> Alerting -> Alert rules lists the rules of Prometheus
+      alertmanagerUid: alertmanager
+      # Sample requests ("exemplars", the dots on the response-time charts) carry a trace id: open it in Jaeger
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: jaeger
+          urlDisplayLabel: Open trace in Jaeger
+
+  - name: Alertmanager
+    type: alertmanager
+    uid: alertmanager
+    access: proxy
+    url: http://alertmanager:9093
+    jsonData:
+      implementation: prometheus
+      handleGrafanaManagedAlerts: false   # the alert rules live in Prometheus (infrastructure/prometheus/alerts)

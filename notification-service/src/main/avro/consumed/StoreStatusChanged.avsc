@@ -1,0 +1,14 @@
+{
+  "type": "record",
+  "name": "StoreStatusChanged",
+  "namespace": "com.grocery.events.store",
+  "doc": "A store was rejected, disabled or enabled again. Producer: store-service. Topic: grocery.store.events, key = storeId.",
+  "fields": [
+    { "name": "eventId",     "type": "string", "doc": "Unique id of this event (UUID). Consumers use it to skip duplicates." },
+    { "name": "occurredAt",  "type": { "type": "long", "logicalType": "timestamp-millis" } },
+    { "name": "storeId",     "type": "long" },
+    { "name": "ownerUserId", "type": "long" },
+    { "name": "status",      "type": "string", "doc": "New status: REJECTED, DISABLED or ACTIVE" },
+    { "name": "reason",      "type": ["null", "string"], "default": null, "doc": "Why (for REJECTED and DISABLED)" }
+  ]
+}

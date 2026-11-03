@@ -1,0 +1,16 @@
+# =====================================================================
+# Local development profile (active by default - see spring.profiles.default)
+# No seed data: payments are created from orders (OrderCreated events).
+# =====================================================================
+
+spring:
+  config:
+    # Your own settings, e.g. the Razorpay test keys: payment-service/.env (copy .env.example). KEY=value lines, read
+    # like environment variables (RAZORPAY_KEY_ID=... fills ${RAZORPAY_KEY_ID} in application.yml). Optional: without
+    # the file nothing changes. It is in .gitignore, so the keys never reach the repository; a real environment
+    # variable still wins over it. Only this local profile reads it (not the tests, not Docker or Kubernetes).
+    import: optional:file:.env[.properties]
+
+logging:
+  level:
+    com.grocery: DEBUG

@@ -1,0 +1,310 @@
+### =====================================================================
+### product-service - ready-to-run requests (WRITE side of the catalog)
+###
+### Calls the service DIRECTLY on port 8104, so we send the X-User-* and X-Store-Id
+### headers ourselves (normally the API gateway adds them from the JWT).
+### Written for the VS Code "REST Client" extension: run the requests in order
+### (request 4 names the new product; later requests reuse its id).
+###
+### Reading products (lists, search) is NOT here: GET requests go to product-read-service,
+### see product-read-service/http/product-read-service.http.
+###
+### Seed data: store 1 = Fresh Mart (vendor user 3), store 2 = Green Basket (vendor user 6),
+### categories 1 Vegetables, 2 Fruits, 3 Dairy & Eggs, 4 Snacks & Beverages, 5 Household.
+### =====================================================================
+
+@baseUrl = http://localhost:8104
+@productId = {{createProduct.response.body.$.data.id}}
+@categoryId = {{createCategory.response.body.$.data.id}}
+
+
+### 1. ADMIN: create a category (run once; a second run gives 409)
+# @name createCategory
+POST {{baseUrl}}/api/v1/admin/categories
+Content-Type: application/json
+X-User-Id: 2
+X-User-Role: ADMIN
+
+{
+  "name": "Bakery & Bread",
+  "description": "Fresh bread, buns and cakes",
+  "displayOrder": 6
+}
+
+
+### 2. ADMIN: rename the category (products in it get the new name in search, via Debezium)
+PUT {{baseUrl}}/api/v1/admin/categories/{{categoryId}}
+Content-Type: application/json
+X-User-Id: 2
+X-User-Role: ADMIN
+
+{
+  "name": "Bakery",
+  "description": "Fresh bread, buns and cakes",
+  "displayOrder": 6
+}
+
+
+### 3. ADMIN: a category name that already exists -> 409
+POST {{baseUrl}}/api/v1/admin/categories
+Content-Type: application/json
+X-User-Id: 2
+X-User-Role: ADMIN
+
+{
+  "name": "Vegetables"
+}
+
+
+### 4. VENDOR (store 1): add a product -> sellingPrice is calculated (45.00 - 10 % = 40.50)
+# @name createProduct
+POST {{baseUrl}}/api/v1/vendor/products
+Content-Type: application/json
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+{
+  "categoryId": 1,
+  "name": "Cherry Tomato",
+  "description": "Sweet cherry tomatoes, great for salads",
+  "brand": "Fresho",
+  "sku": "FM-VEG-020",
+  "unit": "G",
+  "unitQuantity": 250,
+  "price": 45.00,
+  "discountPercentage": 10,
+  "taxPercentage": 0
+}
+
+
+### 5. VENDOR (store 1): change the price -> 50.00 - 20 % = 40.00
+PUT {{baseUrl}}/api/v1/vendor/products/{{productId}}
+Content-Type: application/json
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+{
+  "categoryId": 1,
+  "name": "Cherry Tomato",
+  "description": "Sweet cherry tomatoes, great for salads",
+  "brand": "Fresho",
+  "sku": "FM-VEG-020",
+  "unit": "G",
+  "unitQuantity": 250,
+  "price": 50.00,
+  "discountPercentage": 20,
+  "taxPercentage": 0
+}
+
+
+### 6. VENDOR (store 1): upload a product image (JPEG, PNG or WEBP, max 2 MB)
+POST {{baseUrl}}/api/v1/vendor/products/{{productId}}/images
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+Content-Type: multipart/form-data; boundary=GroceryBoundary
+
+--GroceryBoundary
+Content-Disposition: form-data; name="image"; filename="sample-product.png"
+Content-Type: image/png
+
+< ./sample-product.png
+--GroceryBoundary--
+
+
+### 7. VENDOR (store 1): hide the product (INACTIVE)
+PATCH {{baseUrl}}/api/v1/vendor/products/{{productId}}/status
+Content-Type: application/json
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+{
+  "status": "INACTIVE"
+}
+
+
+### 8. VENDOR (store 1): show it again (ACTIVE)
+PATCH {{baseUrl}}/api/v1/vendor/products/{{productId}}/status
+Content-Type: application/json
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+{
+  "status": "ACTIVE"
+}
+
+
+### 9. VENDOR (store 2): another store's product -> 404 (multi-tenant rule)
+PATCH {{baseUrl}}/api/v1/vendor/products/{{productId}}/status
+Content-Type: application/json
+X-User-Id: 6
+X-User-Role: VENDOR
+X-Store-Id: 2
+
+{
+  "status": "INACTIVE"
+}
+
+
+### 10. VENDOR without an approved store (no X-Store-Id) -> 403
+POST {{baseUrl}}/api/v1/vendor/products
+Content-Type: application/json
+X-User-Id: 10
+X-User-Role: VENDOR
+
+{
+  "categoryId": 1,
+  "name": "Test",
+  "sku": "T-1",
+  "unit": "KG",
+  "unitQuantity": 1,
+  "price": 10,
+  "taxPercentage": 0
+}
+
+
+### 11. VENDOR: invalid product -> 400 with one error per field
+POST {{baseUrl}}/api/v1/vendor/products
+Content-Type: application/json
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+{
+  "categoryId": 1,
+  "name": "",
+  "sku": "bad sku!",
+  "unit": "G",
+  "unitQuantity": 0,
+  "price": 0,
+  "discountPercentage": 95,
+  "taxPercentage": 0
+}
+
+
+### 12. ADMIN: block the product (moderation) -> hidden from customers
+POST {{baseUrl}}/api/v1/admin/products/{{productId}}/block
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 13. VENDOR (store 1): cannot activate a blocked product -> 400
+PATCH {{baseUrl}}/api/v1/vendor/products/{{productId}}/status
+Content-Type: application/json
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+{
+  "status": "ACTIVE"
+}
+
+
+### 14. ADMIN: unblock it -> ACTIVE again
+POST {{baseUrl}}/api/v1/admin/products/{{productId}}/unblock
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 15. VENDOR (store 1): delete the product (soft delete; it disappears from search)
+DELETE {{baseUrl}}/api/v1/vendor/products/{{productId}}
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+
+### =====================================================================
+### Reviews (Phase 11). A customer reviews a product of one of their DELIVERED orders; product-service asks
+### order-service (needs it running). Seed: customer1's order 1 contains Tomato (product 1) once it is delivered,
+### e.g. after e2e/phase7-order-saga.http. Put a delivered order of customer1 in @deliveredOrderId.
+### =====================================================================
+
+@deliveredOrderId = 1
+
+
+### 16. CUSTOMER (user 4): review the tomatoes of a delivered order (4 stars)
+# @name review
+POST {{baseUrl}}/api/v1/products/1/reviews
+Content-Type: application/json
+X-User-Id: 4
+X-User-Role: CUSTOMER
+
+{
+  "orderId": {{deliveredOrderId}},
+  "rating": 4,
+  "comment": "Fresh and firm"
+}
+
+
+### 17. CUSTOMER (user 4): the same product of the same order again -> 409
+POST {{baseUrl}}/api/v1/products/1/reviews
+Content-Type: application/json
+X-User-Id: 4
+X-User-Role: CUSTOMER
+
+{
+  "orderId": {{deliveredOrderId}},
+  "rating": 5
+}
+
+
+### 18. CUSTOMER (user 7): someone else's order -> 404
+POST {{baseUrl}}/api/v1/products/1/reviews
+Content-Type: application/json
+X-User-Id: 7
+X-User-Role: CUSTOMER
+
+{
+  "orderId": {{deliveredOrderId}},
+  "rating": 1
+}
+
+
+### 19. CUSTOMER: 6 stars -> 400
+POST {{baseUrl}}/api/v1/products/1/reviews
+Content-Type: application/json
+X-User-Id: 4
+X-User-Role: CUSTOMER
+
+{
+  "orderId": {{deliveredOrderId}},
+  "rating": 6
+}
+
+
+### 20. PUBLIC: the visible reviews of Tomato, newest first
+GET {{baseUrl}}/api/v1/products/1/reviews
+
+
+### 21. VENDOR (store 1): reviews of my products, e.g. only 1-star ones
+GET {{baseUrl}}/api/v1/vendor/reviews?rating=1
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+
+### 22. ADMIN: all reviews of Tomato
+GET {{baseUrl}}/api/v1/admin/reviews?productId=1
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 23. ADMIN: hide the review (the product's rating is recalculated without it)
+PATCH {{baseUrl}}/api/v1/admin/reviews/{{review.response.body.$.data.id}}/hide
+Content-Type: application/json
+X-User-Id: 2
+X-User-Role: ADMIN
+
+{
+  "reason": "Not about the product"
+}
+
+
+### 24. ADMIN: show it again
+PATCH {{baseUrl}}/api/v1/admin/reviews/{{review.response.body.$.data.id}}/show
+X-User-Id: 2
+X-User-Role: ADMIN

@@ -1,0 +1,12 @@
+# =====================================================================
+# Local development profile (active by default - see spring.profiles.default)
+# =====================================================================
+
+app:
+  order:
+    # Locally you can place orders at any time of day, also while the seed stores are closed.
+    require-store-open: false
+
+logging:
+  level:
+    com.grocery: DEBUG

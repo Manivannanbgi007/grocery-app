@@ -1,0 +1,30 @@
+{
+  "dynamic": "strict",
+  "properties": {
+    "_class": { "type": "keyword", "index": false, "doc_values": false },
+    "id": { "type": "long" },
+    "version": { "type": "long" },
+    "storeId": { "type": "long" },
+    "categoryId": { "type": "long" },
+    "categoryName": { "type": "text" },
+    "name": { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+    "description": { "type": "text" },
+    "brand": { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+    "sku": { "type": "keyword" },
+    "unit": { "type": "keyword" },
+    "unitQuantity": { "type": "scaled_float", "scaling_factor": 1000 },
+    "price": { "type": "scaled_float", "scaling_factor": 100 },
+    "discountPercentage": { "type": "scaled_float", "scaling_factor": 100 },
+    "sellingPrice": { "type": "scaled_float", "scaling_factor": 100 },
+    "taxPercentage": { "type": "scaled_float", "scaling_factor": 100 },
+    "imageUrls": { "type": "keyword" },
+    "status": { "type": "keyword" },
+    "ratingAverage": { "type": "double" },
+    "ratingCount": { "type": "integer" },
+    "availableQuantity": { "type": "integer" },
+    "inStock": { "type": "boolean" },
+    "lowStock": { "type": "boolean" },
+    "createdAt": { "type": "date", "format": "epoch_millis" },
+    "updatedAt": { "type": "date", "format": "epoch_millis" }
+  }
+}

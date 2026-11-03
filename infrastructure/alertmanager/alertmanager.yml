@@ -1,0 +1,58 @@
+# Alertmanager: receives the firing alerts from Prometheus, groups them, and sends the notifications.
+# Locally the emails go to Mailpit (http://localhost:8025); nothing leaves your machine.
+# Production: replace the receiver with the team's channel (Slack, Microsoft Teams, PagerDuty, a real mail server).
+# The alerts and silences: http://localhost:9093, or Grafana -> Alerting.
+global:
+  resolve_timeout: 5m
+  smtp_smarthost: mailpit:1025        # the Mailpit container (same Docker network)
+  smtp_from: alertmanager@grocery.local
+  smtp_require_tls: false             # Mailpit speaks plain SMTP
+
+route:
+  receiver: team-email
+  group_by: [alertname, service]      # one email per alert and service, even if it fires again and again
+  group_wait: 30s                     # wait a little for related alerts, then send them together
+  group_interval: 5m                  # new alerts of an existing group: at most every 5 minutes
+  repeat_interval: 4h                 # still firing: remind every 4 hours
+  routes:
+    - matchers: [severity="critical"]
+      receiver: team-email
+      repeat_interval: 1h             # critical: remind every hour
+
+receivers:
+  - name: team-email
+    email_configs:
+      - to: oncall@grocery.local
+        send_resolved: true           # also an email when the problem is gone
+
+inhibit_rules:
+  # A service that is down also looks unhealthy, slow ... - send only "ServiceDown" for it.
+  - source_matchers: [alertname="ServiceDown"]
+    target_matchers: [alertname!="ServiceDown"]
+    equal: [service]
+
+  # A data store is down: the services that use it report themselves unhealthy, answer with errors and log errors,
+  # and their Kafka consumers stop moving. Send the cause (MySQLDown ...), not one email per symptom and service.
+  # Meanwhile other problems of those services are held back too; they are sent once the store is back.
+  - source_matchers: [alertname="MySQLDown"]               # every service except the gateway uses MySQL
+    target_matchers:
+      - alertname=~"ServiceUnhealthy|HighErrorRate|SlowResponses|DatabaseConnectionTimeouts|DatabasePoolExhausted|ManyErrorLogs|KafkaConsumerNoProgress|KafkaConsumerLagGrowing|DebeziumNotReadingBinlog"
+  - source_matchers: [alertname="RedisDown"]
+    target_matchers:
+      - alertname=~"ServiceUnhealthy|HighErrorRate|ManyErrorLogs"
+      - service=~"api-gateway|delivery-service"         # the two services that use Redis
+  # The fast SLO alert already says it: no second email from the slow one.
+  - source_matchers: [alertname="ErrorBudgetBurningFast"]
+    target_matchers: [alertname="ErrorBudgetBurningSlowly"]
+
+  # Kafka is down: every consumer stops moving, Kafka Connect and Debezium fail, the Kafka exporter cannot read the
+  # broker, and the consumers log errors. Send KafkaDown only.
+  - source_matchers: [alertname="KafkaDown"]
+    target_matchers:
+      - alertname=~"KafkaConsumerNoProgress|KafkaConsumerLagGrowing|KafkaConsumerRebalancing|KafkaConnectDown|KafkaConnectorNotRunning|KafkaConnectTaskFailed|DebeziumNotReadingBinlog|ManyErrorLogs"
+  - source_matchers: [alertname="KafkaDown"]
+    target_matchers: [alertname="MonitoringToolDown", tool="kafka-exporter"]
+  - source_matchers: [alertname="ElasticsearchDown"]
+    target_matchers:
+      - alertname=~"ServiceUnhealthy|HighErrorRate|SlowResponses|ManyErrorLogs|KafkaConsumerNoProgress|KafkaConsumerLagGrowing"
+      - service="product-read-service"                  # the service that uses Elasticsearch

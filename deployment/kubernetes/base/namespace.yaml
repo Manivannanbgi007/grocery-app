@@ -1,0 +1,7 @@
+# Every grocery resource lives in the namespace "grocery" (the same name in both clusters).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: grocery
+  labels:
+    app.kubernetes.io/part-of: grocery

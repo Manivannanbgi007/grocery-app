@@ -1,0 +1,38 @@
+# Cluster A: one control plane + two workers. kind = Kubernetes in Docker: every node is a Docker container.
+# Create:  kind create cluster --config deployment/kubernetes/clusters/cluster-a.yaml   (scripts\k8s-create-clusters.ps1 does it)
+# kubectl context: kind-grocery-cluster-a
+# cluster-b.yaml is the same apart from the name and the port.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: grocery-cluster-a
+
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      # The cluster's NGINX gateway listens on node port 30080 on every node (addons/nginx-gateway-fabric/values.yaml).
+      # kind publishes it on your machine: http://localhost:8281 = cluster A. (Not 8081: Schema Registry uses that.)
+      - containerPort: 30080
+        hostPort: 8281
+        listenAddress: 127.0.0.1         # only this machine, not your network
+        protocol: TCP
+
+  # The workers run the pods. Both mount the same three folders of your machine, so every pod of both clusters
+  # sees the same photos and invoices (hostPath volumes in the product-, delivery- and order-service Deployments).
+  # These are the folders the services also use when you run them with mvnw. If your project is somewhere else,
+  # change the hostPath lines (here and in cluster-b.yaml).
+  - role: worker
+    extraMounts:
+      - hostPath: D:/Drive E/dev/grocery-app/product-service/uploads
+        containerPath: /grocery-files/product-uploads
+      - hostPath: D:/Drive E/dev/grocery-app/delivery-service/uploads
+        containerPath: /grocery-files/delivery-uploads
+      - hostPath: D:/Drive E/dev/grocery-app/order-service/data/invoices
+        containerPath: /grocery-files/order-invoices
+  - role: worker
+    extraMounts:
+      - hostPath: D:/Drive E/dev/grocery-app/product-service/uploads
+        containerPath: /grocery-files/product-uploads
+      - hostPath: D:/Drive E/dev/grocery-app/delivery-service/uploads
+        containerPath: /grocery-files/delivery-uploads
+      - hostPath: D:/Drive E/dev/grocery-app/order-service/data/invoices
+        containerPath: /grocery-files/order-invoices

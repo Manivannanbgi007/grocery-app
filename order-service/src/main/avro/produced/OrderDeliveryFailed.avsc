@@ -1,0 +1,36 @@
+{
+  "type": "record",
+  "name": "OrderDeliveryFailed",
+  "namespace": "com.grocery.events.order",
+  "doc": "The delivery failed and the order will not be delivered. Compensation like OrderCancelled: inventory releases the stock (the items go back to the store), payment refunds a paid order or cancels COD, cart frees the coupon. Producer: order-service. Topic: grocery.order.events, key = orderId.",
+  "fields": [
+    {
+      "name": "eventId",
+      "type": "string",
+      "doc": "Unique id of this event (UUID). Consumers use it to skip duplicates."
+    },
+    {
+      "name": "occurredAt",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      }
+    },
+    {
+      "name": "orderId",
+      "type": "long"
+    },
+    {
+      "name": "customerUserId",
+      "type": "long"
+    },
+    {
+      "name": "storeId",
+      "type": "long"
+    },
+    {
+      "name": "reason",
+      "type": "string"
+    }
+  ]
+}

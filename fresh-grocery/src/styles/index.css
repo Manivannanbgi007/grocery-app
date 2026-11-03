@@ -1,0 +1,611 @@
+/*
+ * Tailwind CSS v4: all configuration lives in this file (there is no tailwind.config.js).
+ * Every "--color-xyz" below becomes classes like bg-xyz, text-xyz and border-xyz.
+ * Every "--font-xyz" becomes a font-xyz class.
+ */
+@import "tailwindcss";
+
+@theme {
+  /*
+   * Fonts (self-hosted through @fontsource, imported in main.tsx):
+   * display = page and section titles (h1, h2), heading = the interface (buttons, labels, menus, prices, card titles),
+   * body = running text.
+   */
+  --font-display: "Fraunces Variable", ui-serif, Georgia, serif;
+  --font-heading: "Quicksand", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "Lato", ui-sans-serif, system-ui, sans-serif;
+
+  /*
+   * Brand green (#09792f) and its shades. White text on brand is 5.5:1 and brand text on white 5.5:1, on brand-light
+   * 5.1:1 (WCAG AA). The dark theme has its own steps (below).
+   */
+  --color-brand: #09792f; /* buttons, badges, active states, icons */
+  --color-brand-dark: #075f24; /* hover and pressed */
+  --color-brand-text: #09792f; /* green text (the same as brand here; light green in the dark theme) */
+  --color-brand-light: #e7f9ed; /* page banners, light buttons, the selected row */
+  --color-brand-soft: #bce6ca; /* borders on light green */
+
+  /* Text and lines */
+  --color-heading: #253d4e; /* titles, product names */
+  --color-body: #6b6b6b; /* normal text */
+  --color-muted: #b6b6b6; /* crossed-out prices, hints */
+  --color-line: #cdd8d2; /* card, field and table borders: a soft green-grey, visible on white and on the page */
+  --color-surface: #f4f6fa; /* grey boxes inside cards (table headers, notes, chips) */
+
+  /* Backgrounds: one page colour behind every screen, and white cards on it */
+  --color-page: #f4f7f5;
+  --color-card: #ffffff; /* cards, menus, dialogs, fields (use it instead of bg-white, so the dark theme can change it) */
+
+  /*
+   * The gradient behind every page (body, below) and the glass over it: four soft glows (mint, sky, peach, lilac), and
+   * the see-through card colour of the glass panes (bg-glass) and of the frosted bars (bg-glass-strong, glass-bar).
+   */
+  --color-glow-1: #b2ebc8;
+  --color-glow-2: #c0dfff;
+  --color-glow-3: #ffd4b5;
+  --color-glow-4: #e4d0ff;
+  --color-glass: rgb(255 255 255 / 0.55);
+  --color-glass-strong: rgb(255 255 255 / 0.72);
+
+  /* The shadow every card gets (see "Cards" at the end of this file); also the class shadow-card. The inset line is the
+     light top edge of a pane of glass. */
+  --shadow-card: inset 0 1px 0 rgb(255 255 255 / 0.7), 0 1px 3px rgb(37 61 78 / 0.08), 0 6px 20px -4px rgb(37 61 78 / 0.16);
+
+  /* Accents and product badges */
+  --color-accent: #fdc040; /* stars, yellow buttons */
+  --color-hot: #f74b81;
+  --color-hot-text: #c2185b; /* pink text readable on white (the hover of "Clear all", "Remove") */
+  --color-sale: #67bcee;
+  --color-new: #f59758;
+
+  /* Pastel backgrounds for category tiles and image placeholders */
+  --color-tile-1: #f2fce4;
+  --color-tile-2: #fffceb;
+  --color-tile-3: #ecffec;
+  --color-tile-4: #feefea;
+  --color-tile-5: #fff3eb;
+  --color-tile-6: #fff3ff;
+
+  /* Backgrounds of the three promo cards on the home page */
+  --color-promo-1: #f0e8d5;
+  --color-promo-2: #f3e8e8;
+  --color-promo-3: #e7eaf3;
+
+  /* Light backgrounds of the vendor (orange) and delivery (blue) login screens, and a blue readable on white */
+  --color-new-light: #fff1e6;
+  --color-sale-light: #e6f4fc;
+  --color-sale-text: #1d6b9c;
+
+  /* Violet: one of the four colours of the customer's order page (green, blue, orange, violet), with its light
+     background and a violet readable on it (features/orders/OrderPage.tsx) */
+  --color-violet: #8b5cf6;
+  --color-violet-light: #f1ebff;
+  --color-violet-text: #6d28d9;
+
+  /* A deep blue and a deep violet that stay the same in the dark theme (sale-text and violet-text turn light there):
+     the ends of colourful gradients with white text or icons on them (the AI chat, the page headers, "Thank you for
+     your order!"), so the white stays readable in both themes */
+  --color-deep-blue: #1d6b9c;
+  --color-deep-violet: #6d28d9;
+
+  /* The dark surfaces of the admin panel: its menu, its login screen and the dashboard's welcome banner */
+  --color-ink: #16252f;
+  --color-ink-soft: #253d4e; /* the lighter end of the dark gradients */
+  --color-ink-line: #2a3d4a; /* borders and hover on ink */
+  --color-ink-text: #a9bac6; /* small text on ink */
+  --color-ink-brand: #54d47e; /* green text and icons on ink (brand is too dark there: 2.8:1; this is 8.3:1) */
+
+  /*
+   * Destructive actions (Delete, Remove, Cancel order, Reject, Disable): one red everywhere, see danger and
+   * danger-outline in components/ui/buttonClasses.ts. danger is a button's fill (white text 5.6:1), danger-hover its
+   * darker hover (7.7:1), danger-text red text on the card (6.6:1, 5.8:1 on danger-light), danger-light a soft red
+   * background (the hover of an outline button).
+   */
+  --color-danger: #c62828;
+  --color-danger-hover: #a51818;
+  --color-danger-text: #b42318;
+  --color-danger-light: #fdecec;
+
+  /* Work that waits ("needs your attention"): amber, with a darker shade that is readable as text on white */
+  --color-warn: #f59e0b;
+  --color-warn-text: #b45309;
+  --color-warn-light: #fff6e5;
+
+  /*
+   * The social login buttons (components/auth/SocialLoginButtons.tsx) in each provider's own colours, from their
+   * branding rules, so people recognise them: Google's and Microsoft's light buttons, Facebook's blue one (Meta's
+   * current blue, white text 4.8:1), Apple's black one. The dark theme has the providers' dark versions.
+   */
+  --color-google: #ffffff;
+  --color-google-hover: #f2f2f2;
+  --color-google-border: #747775;
+  --color-google-text: #1f1f1f;
+  --color-microsoft: #ffffff;
+  --color-microsoft-hover: #f3f3f3;
+  --color-microsoft-border: #8c8c8c;
+  --color-microsoft-text: #5e5e5e;
+  --color-facebook: #0866ff;
+  --color-facebook-hover: #0759d9;
+  --color-apple: #000000;
+  --color-apple-hover: #333333;
+  --color-apple-text: #ffffff;
+
+  /*
+   * The parts of the donut charts (components/charts/DonutChart.tsx): done, waiting, stopped, other. Checked with the
+   * dataviz palette validator against the card colour, in both themes (all pairs, at most 4 parts per chart). Always
+   * shown with a legend that names every part and its number, never by colour alone.
+   */
+  --color-chart-good: #1f8a5a;
+  --color-chart-wait: #eda100;
+  --color-chart-bad: #e2457a;
+  --color-chart-info: #2a78d6;
+
+  /* animate-slide-up: used by the "on sale" pop-up */
+  --animate-slide-up: slide-up 0.4s ease-out;
+
+  @keyframes slide-up {
+    from {
+      opacity: 0;
+      transform: translateY(1.5rem);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* animate-message-in: a new message of the AI chat fades in from a little lower */
+  --animate-message-in: message-in 0.25s ease-out;
+
+  @keyframes message-in {
+    from {
+      opacity: 0;
+      transform: translateY(0.5rem);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /*
+   * The admin dashboard's movements (always written as motion-safe:animate-..., so "reduce motion" turns them off).
+   * A keyframe without "to" ends at the element's own value: e.g. "draw" sweeps a ring from nothing to its real length.
+   */
+  /* animate-rise: a block fades in from a little lower (components/ui/Appear.tsx); "backwards" keeps it hidden during
+     its delay and leaves no transform behind afterwards */
+  --animate-rise: rise 0.55s cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
+  /* animate-float: drifts up and down for ever (the banner's illustration and lights) */
+  --animate-float: float 7s ease-in-out infinite;
+  /* animate-wave: the greeting's hand waves twice */
+  --animate-wave: wave 2.4s ease-in-out 0.6s 2;
+  /* animate-grow-up / animate-grow-x: a column or a bar grows from its base (with origin-bottom or origin-left) */
+  --animate-grow-up: grow-up 0.8s cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
+  --animate-grow-x: grow-x 0.9s cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
+  /* animate-draw: a ring part (SVG circle with stroke-dasharray, circumference 100) sweeps round */
+  --animate-draw: draw 1s cubic-bezier(0.2, 0.7, 0.3, 1);
+  /* animate-reveal: a chart uncovers from left to right */
+  --animate-reveal: reveal 1.1s cubic-bezier(0.2, 0.7, 0.3, 1);
+  /* animate-shimmer: a light sweeps across a loading block (components/ui/Skeleton.tsx) */
+  --animate-shimmer: shimmer 1.6s ease-in-out infinite;
+
+  /* The AI chat (features/assistant): the panel slides in from the right (from the bottom on a phone); the customer's
+     bubbles come in from the right, the assistant's from the left; the title bar's gradient drifts slowly */
+  --animate-chat-in: chat-in 0.35s cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
+  --animate-chat-up: chat-up 0.35s cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
+  --animate-bubble-mine: bubble-mine 0.35s cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
+  --animate-bubble-theirs: bubble-theirs 0.35s cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
+  --animate-gradient-drift: gradient-drift 8s ease-in-out infinite;
+
+  /* The delivery history's road (features/delivery/tasks/HistoryCard.tsx): the scooter rides from the store to the
+     customer (from left 0 to its own place at the end) and the road turns green behind it (from width 0 to its own) */
+  --animate-ride: ride 1.1s cubic-bezier(0.45, 0, 0.2, 1) backwards;
+  --animate-road: road 1.1s cubic-bezier(0.45, 0, 0.2, 1) backwards;
+
+  /* animate-nudge: an arrow that keeps pointing onwards (the vendor's order flow, features/vendor/orders/OrderFlow.tsx) */
+  --animate-nudge: nudge 1.6s ease-in-out infinite;
+
+  /* The login and sign-up screens (components/auth/AuthScreen.tsx): animate-blob lets the soft coloured circles behind
+     the side panel and the form drift around slowly; animate-shake shakes an error message once when it appears
+     (features/auth/LoginForm.tsx), so the eye goes to it */
+  --animate-blob: blob 14s ease-in-out infinite;
+  --animate-shake: shake 0.45s ease-in-out;
+
+  /* The customer's order page (features/orders/OrderPage.tsx): animate-pop lets a round icon jump in with a small
+     bounce (the tick of "Thank you for your order!" and of a paid order); the curve goes a little past its end size */
+  --animate-pop: pop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+
+  @keyframes pop {
+    from {
+      opacity: 0;
+      transform: scale(0.4);
+    }
+  }
+  @keyframes blob {
+    33% {
+      transform: translate(2rem, -1.5rem) scale(1.1);
+    }
+    66% {
+      transform: translate(-1.5rem, 1rem) scale(0.95);
+    }
+  }
+  @keyframes shake {
+    20%,
+    60% {
+      transform: translateX(-6px);
+    }
+    40%,
+    80% {
+      transform: translateX(6px);
+    }
+  }
+  @keyframes nudge {
+    50% {
+      transform: translateX(3px);
+    }
+  }
+  @keyframes ride {
+    from {
+      left: 0;
+    }
+  }
+  @keyframes road {
+    from {
+      width: 0;
+    }
+  }
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(1rem);
+    }
+  }
+  @keyframes float {
+    50% {
+      transform: translateY(-0.6rem);
+    }
+  }
+  @keyframes wave {
+    0%,
+    60%,
+    100% {
+      rotate: 0deg;
+    }
+    10%,
+    30% {
+      rotate: 14deg;
+    }
+    20% {
+      rotate: -8deg;
+    }
+    40% {
+      rotate: -4deg;
+    }
+    50% {
+      rotate: 10deg;
+    }
+  }
+  @keyframes grow-up {
+    from {
+      transform: scaleY(0);
+    }
+  }
+  @keyframes grow-x {
+    from {
+      transform: scaleX(0);
+    }
+  }
+  @keyframes draw {
+    from {
+      stroke-dasharray: 0 100;
+    }
+  }
+  @keyframes reveal {
+    from {
+      clip-path: inset(0 100% 0 0);
+    }
+  }
+  @keyframes shimmer {
+    from {
+      translate: -100% 0;
+    }
+    to {
+      translate: 100% 0;
+    }
+  }
+  @keyframes chat-in {
+    from {
+      opacity: 0;
+      transform: translateX(2rem);
+    }
+  }
+  @keyframes chat-up {
+    from {
+      opacity: 0;
+      transform: translateY(2rem);
+    }
+  }
+  @keyframes bubble-mine {
+    from {
+      opacity: 0;
+      transform: translateX(0.75rem) scale(0.97);
+    }
+  }
+  @keyframes bubble-theirs {
+    from {
+      opacity: 0;
+      transform: translateX(-0.75rem) scale(0.97);
+    }
+  }
+  @keyframes gradient-drift {
+    50% {
+      background-position: 100% 50%;
+    }
+  }
+}
+
+/* Hides the scroll bar of a sideways-scrolling row (it is still scrollable by touch, trackpad and the arrow buttons). */
+@utility scrollbar-none {
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* The page width used by every section: full width on phones, at most 1600px on big screens. */
+@utility page-container {
+  width: 100%;
+  max-width: 100rem;
+  margin-inline: auto;
+  padding-inline: 1rem;
+
+  @media (width >= 64rem) {
+    padding-inline: 1.5rem;
+  }
+}
+
+/*
+ * The shop's header stays at the top while the page scrolls (Header.tsx, sticky). --header-height is its height
+ * (rounded up) per screen size; change it when the header gets taller or smaller:
+ * phones 127px (two rows: icons, search), tablets 81px (one row), from 1024px 99px (more padding).
+ */
+:root {
+  --header-height: 8rem;
+
+  @media (width >= 48rem) {
+    --header-height: 5.25rem;
+  }
+  @media (width >= 64rem) {
+    --header-height: 6.25rem;
+  }
+}
+
+/* Shop pages only (the panels have no such header): a link to a part of the page (/#deals) and the keyboard focus
+   scroll to below the header instead of under it. */
+html:has(#shop-header) {
+  scroll-padding-top: var(--header-height);
+}
+
+/*
+ * A frosted bar (the shop's sticky header, the panels' top bar): the page that scrolls under it shows blurred. The blur
+ * sits on a layer behind the bar's content (::before), not on the bar itself: a blur on the bar would trap the menus
+ * inside it that cover the whole screen (position: fixed), such as the shop's phone menu. The bar must be positioned
+ * and have a z-index (sticky top-0 z-50), so the layer stays behind its content.
+ */
+@utility glass-bar {
+  background-color: transparent;
+
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background-color: var(--color-glass-strong);
+    backdrop-filter: blur(18px) saturate(160%);
+  }
+}
+
+/* A sticky column that should stop below the shop's header (the cart and checkout summaries): lg:sticky lg:top-below-header */
+@utility top-below-header {
+  top: calc(var(--header-height) + 1rem);
+}
+
+/*
+ * The dark theme: the same colour names with dark values, so the components need no changes.
+ * The theme switch (features/theme) sets <html data-theme="dark">; index.html sets it before the page is drawn.
+ * Green stays the brand colour; "white" stays white (text on green buttons, the knob of a switch).
+ */
+@layer base {
+  :root[data-theme="dark"] {
+    color-scheme: dark; /* dark scroll bars, date pickers and other parts drawn by the browser */
+
+    /* One step lighter than #09792f, so a green icon shows on the dark card (3.2:1) and white text stays 5.1:1 */
+    --color-brand: #0a8031;
+    --color-brand-dark: #09792f;
+    --color-brand-text: #54d47e; /* 8.7:1 on the card */
+    --color-brand-light: #163b23;
+    --color-brand-soft: #2b643e;
+
+    --color-heading: #e8eef1;
+    --color-body: #aab7bf;
+    --color-muted: #75848d;
+    --color-line: #34474f;
+    --color-surface: #1f2c32;
+    --color-page: #0f171a;
+    --color-card: #172126;
+    /* on a dark page a light shadow is invisible: darker and a bit wider (with a faint light top edge) */
+    --shadow-card: inset 0 1px 0 rgb(255 255 255 / 0.05), 0 1px 2px rgb(0 0 0 / 0.45), 0 6px 16px -4px rgb(0 0 0 / 0.55);
+
+    /* the dark gradient: deep green, blue, amber and plum glows; the glass is the dark card colour, see-through */
+    --color-glow-1: #0d3322;
+    --color-glow-2: #0e2541;
+    --color-glow-3: #33210f;
+    --color-glow-4: #2a1637;
+    --color-glass: rgb(23 33 38 / 0.62);
+    --color-glass-strong: rgb(23 33 38 / 0.8);
+
+    --color-tile-1: #1d2b1f;
+    --color-tile-2: #2b2a1b;
+    --color-tile-3: #1a2e21;
+    --color-tile-4: #301f1c;
+    --color-tile-5: #2f251a;
+    --color-tile-6: #2c1f2d;
+
+    --color-promo-1: #2d281c;
+    --color-promo-2: #2f2324;
+    --color-promo-3: #212635;
+
+    --color-hot-text: #ff85a9;
+
+    --color-new-light: #34251b;
+    --color-sale-light: #152a3a;
+    --color-sale-text: #7cc6f2;
+    --color-violet-light: #261c3d;
+    --color-violet-text: #c4b5fd;
+
+    --color-ink: #0a1012;
+    --color-ink-soft: #1c2b33;
+    --color-ink-line: #22313a;
+
+    --color-warn-text: #fbbf24;
+    --color-warn-light: #2f2611;
+
+    /* destructive actions: white text 4.8:1 on the fill (6.5:1 on its hover), the red text 7.2:1 on the card */
+    --color-danger: #dc2626;
+    --color-danger-hover: #b91c1c;
+    --color-danger-text: #ff8a80;
+    --color-danger-light: #3a1d1f;
+
+    /* the providers' dark buttons (Facebook's blue is the same in both themes) */
+    --color-google: #131314;
+    --color-google-hover: #26272a;
+    --color-google-border: #8e918f;
+    --color-google-text: #e3e3e3;
+    --color-microsoft: #2f2f2f;
+    --color-microsoft-hover: #3d3d3d;
+    --color-microsoft-border: #5e5e5e;
+    --color-microsoft-text: #ffffff;
+    --color-apple: #ffffff;
+    --color-apple-hover: #e6e6e6;
+    --color-apple-text: #000000;
+
+    /* the donut parts, stepped for the dark card (validated as a set on #172126) */
+    --color-chart-good: #1f8f5c;
+    --color-chart-wait: #c98500;
+    --color-chart-bad: #e05587;
+    --color-chart-info: #3987e5;
+  }
+
+  :root {
+    color-scheme: light;
+  }
+
+  html {
+    font-family: var(--font-body);
+    color: var(--color-body);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* The gradient behind every page: four soft glows in the corners over the page colour, fixed to the window (it does
+     not scroll with the page; phones that cannot fix it simply let it scroll) */
+  body {
+    background-color: var(--color-page);
+    background-image:
+      radial-gradient(75rem 55rem at -10% -10%, var(--color-glow-1), transparent 70%),
+      radial-gradient(70rem 55rem at 110% -5%, var(--color-glow-2), transparent 70%),
+      radial-gradient(75rem 60rem at 105% 105%, var(--color-glow-3), transparent 70%),
+      radial-gradient(70rem 55rem at -5% 105%, var(--color-glow-4), transparent 70%);
+    background-attachment: fixed;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-heading);
+    font-weight: 700;
+    color: var(--color-heading);
+  }
+
+  /* Page and section titles in Fraunces; 600 because its bold is heavier than Quicksand's */
+  h1,
+  h2 {
+    font-family: var(--font-display);
+    font-weight: 600;
+  }
+
+  /* Tailwind v4 buttons use the default cursor; links and buttons should feel clickable */
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  /* Edge adds its own "reveal password" eye; PasswordField has a Show / Hide button already */
+  input::-ms-reveal,
+  input::-ms-clear {
+    display: none;
+  }
+
+  /* A clearly visible focus ring for keyboard users, in the brand colour */
+  :focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+  }
+
+  /*
+   * Cards: every box with a card background and a border all round ("border border-line bg-card") gets a soft shadow,
+   * so it stands out from the page. The rule has the lowest priority (in this base layer, inside :where()), so a box
+   * that sets its own shadow (shadow-sm, shadow-xl, hover:shadow-md ...) keeps it. Form fields and buttons use the same
+   * colours but stay flat; bars with a border on one side only (headers, side menus) are not cards.
+   */
+  :where(.bg-card.border.border-line):not(input, textarea, select, button) {
+    box-shadow: var(--shadow-card);
+  }
+
+  /*
+   * Tables: the row under the mouse lights up in a pale green, so a long row is easy to follow across. Every table of
+   * the panels gets it from here; the date picker's grid of days (role="grid") does not. A row with its own background
+   * class keeps it (this base layer has the lowest priority).
+   */
+  :where(table:not([role="grid"])) tbody tr {
+    transition: background-color 150ms;
+  }
+  :where(table:not([role="grid"])) tbody tr:hover {
+    background-color: color-mix(in oklab, var(--color-brand-light) 55%, transparent);
+  }
+}
+
+/*
+ * Toasts (sonner, in App.tsx): always sonner's dark look, black with white text, so they stand out from the page.
+ * The icon shows the kind of message (sonner draws it in the text colour, so it takes these colours).
+ */
+[data-sonner-toast][data-type="success"] [data-icon] {
+  color: var(--color-ink-brand); /* the light green that is readable on dark surfaces */
+}
+[data-sonner-toast][data-type="error"] [data-icon] {
+  color: var(--color-hot);
+}
+[data-sonner-toast][data-type="warning"] [data-icon] {
+  color: var(--color-accent);
+}
+[data-sonner-toast][data-type="info"] [data-icon] {
+  color: var(--color-sale);
+}
+
+/*
+ * Glass cards: the big rounded boxes in the card colour (bg-card with rounded-2xl or rounded-3xl: cards, tiles, tables,
+ * forms) are see-through panes over the page's gradient. Boxes that float over the page (menus, drop-downs, pop-ups and
+ * dialogs: absolute, fixed, or with a dialog, listbox or menu role) stay solid, so the text behind them never shows
+ * through. Small things (fields, buttons, pills) keep their solid colour too.
+ *
+ * No backdrop-filter here on purpose: it would make every card a layer of its own, and a drop-down opening out of one
+ * card (a filter above a table) would slide under the next card. Over the soft gradient the panes look like glass anyway.
+ *
+ * This rule is outside every @layer on purpose, so it wins over the bg-card class of the utilities layer.
+ */
+.bg-card:is(.rounded-2xl, .rounded-3xl):not(.absolute, .fixed, [role="dialog"], [role="alertdialog"], [role="listbox"], [role="menu"]) {
+  background-color: var(--color-glass);
+}

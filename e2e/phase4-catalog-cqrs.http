@@ -1,0 +1,161 @@
+### =====================================================================
+### END-TO-END (Phase 4): the catalog with CQRS, through the API gateway (port 8080)
+###
+###   writes (POST/PUT/PATCH/DELETE) -> product-service -> MySQL
+###        -> Debezium -> Kafka (cdc.product_db.*) -> product-read-service -> Elasticsearch
+###   reads  (GET)                    -> product-read-service -> Elasticsearch
+###
+### Needs: infrastructure, auth-service, product-service, product-read-service, api-gateway,
+###        and the connectors (scripts\register-connectors.ps1).
+### Written for the VS Code "REST Client" extension. Run the requests IN ORDER.
+### "wait" steps: a change reaches search after about a second (eventual consistency).
+### =====================================================================
+
+@gatewayUrl = http://localhost:8080
+
+@vendorToken = {{vendorLogin.response.body.$.data.accessToken}}
+@adminToken = {{adminLogin.response.body.$.data.accessToken}}
+@categoryId = {{newCategory.response.body.$.data.id}}
+@productId = {{newProduct.response.body.$.data.id}}
+@imagePath = {{imageUpload.response.body.$.data.imageUrls[0]}}
+
+
+### 1. vendor1 (Fresh Mart, store 1) logs in
+# @name vendorLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "vendor1@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 2. The admin logs in
+# @name adminLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 3. Admin creates a category (WRITE -> product-service)
+# @name newCategory
+POST {{gatewayUrl}}/api/v1/admin/categories
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "name": "Bakery & Bread",
+  "displayOrder": 6
+}
+
+
+### 4. Vendor adds a product to it (WRITE -> product-service; 50.00 - 10 % = 45.00)
+# @name newProduct
+POST {{gatewayUrl}}/api/v1/vendor/products
+Authorization: Bearer {{vendorToken}}
+Content-Type: application/json
+
+{
+  "categoryId": {{categoryId}},
+  "name": "Whole Wheat Bread",
+  "brand": "Modern",
+  "sku": "FM-BRD-001",
+  "unit": "G",
+  "unitQuantity": 400,
+  "price": 50.00,
+  "discountPercentage": 10,
+  "taxPercentage": 0
+}
+
+
+### 5. (wait) Customers find it by searching (READ -> product-read-service, Elasticsearch, no token)
+# @wait 2
+GET {{gatewayUrl}}/api/v1/products?q=bread
+
+
+### 6. Vendor changes the price (50.00 - 20 % = 40.00)
+PUT {{gatewayUrl}}/api/v1/vendor/products/{{productId}}
+Authorization: Bearer {{vendorToken}}
+Content-Type: application/json
+
+{
+  "categoryId": {{categoryId}},
+  "name": "Whole Wheat Bread",
+  "brand": "Modern",
+  "sku": "FM-BRD-001",
+  "unit": "G",
+  "unitQuantity": 400,
+  "price": 50.00,
+  "discountPercentage": 20,
+  "taxPercentage": 0
+}
+
+
+### 7. (wait) The search result shows the new price
+# @wait 2
+GET {{gatewayUrl}}/api/v1/products/{{productId}}
+
+
+### 8. Admin renames the category
+PUT {{gatewayUrl}}/api/v1/admin/categories/{{categoryId}}
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "name": "Bakery",
+  "displayOrder": 6
+}
+
+
+### 9. (wait) The product now shows the new category name; searching "bakery" finds it
+# @wait 2
+GET {{gatewayUrl}}/api/v1/products?q=bakery
+
+
+### 10. Vendor uploads a product image
+# @name imageUpload
+POST {{gatewayUrl}}/api/v1/vendor/products/{{productId}}/images
+Authorization: Bearer {{vendorToken}}
+Content-Type: multipart/form-data; boundary=GroceryBoundary
+
+--GroceryBoundary
+Content-Disposition: form-data; name="image"; filename="sample-product.png"
+Content-Type: image/png
+
+< ./assets/sample-product.png
+--GroceryBoundary--
+
+
+### 11. Anyone can load the image (the URL from request 10, served through the gateway)
+GET {{imagePath}}
+
+
+### 12. Admin blocks the product (moderation)
+POST {{gatewayUrl}}/api/v1/admin/products/{{productId}}/block
+Authorization: Bearer {{adminToken}}
+
+
+### 13. (wait) Customers can no longer see it -> 404
+# @wait 2
+GET {{gatewayUrl}}/api/v1/products/{{productId}}
+
+
+### 14. The vendor still sees it in their list, as BLOCKED
+GET {{gatewayUrl}}/api/v1/vendor/products?status=BLOCKED
+Authorization: Bearer {{vendorToken}}
+
+
+### 15. Vendor deletes the product
+DELETE {{gatewayUrl}}/api/v1/vendor/products/{{productId}}
+Authorization: Bearer {{vendorToken}}
+
+
+### 16. (wait) It is gone from the read model, even for the admin -> 404
+# @wait 2
+GET {{gatewayUrl}}/api/v1/admin/products/{{productId}}
+Authorization: Bearer {{adminToken}}

@@ -1,0 +1,41 @@
+{
+  "type": "record",
+  "name": "OrderConfirmed",
+  "namespace": "com.grocery.events.order",
+  "doc": "Stock is reserved and the payment is confirmed (paid online, or cash on delivery accepted): the store can now accept the order. Producer: order-service. Topic: grocery.order.events, key = orderId.",
+  "fields": [
+    {
+      "name": "eventId",
+      "type": "string",
+      "doc": "Unique id of this event (UUID). Consumers use it to skip duplicates."
+    },
+    {
+      "name": "occurredAt",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      }
+    },
+    {
+      "name": "orderId",
+      "type": "long"
+    },
+    {
+      "name": "customerUserId",
+      "type": "long"
+    },
+    {
+      "name": "storeId",
+      "type": "long"
+    },
+    {
+      "name": "totalAmount",
+      "type": "string",
+      "doc": "Amount as decimal text, e.g. \"201.00\" (exact, readable in Kafka UI)"
+    },
+    {
+      "name": "paymentMethod",
+      "type": "string"
+    }
+  ]
+}

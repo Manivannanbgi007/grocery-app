@@ -1,0 +1,35 @@
+# Build output
+target/
+build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.classpath
+.project
+.settings/
+.factorypath
+.apt_generated
+.sts4-cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs and local files
+*.log
+logs/
+uploads/
+**/data/invoices/
+/backups/
+
+# Frontend (Phase 13)
+node_modules/
+dist/

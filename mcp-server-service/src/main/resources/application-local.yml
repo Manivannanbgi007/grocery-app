@@ -1,0 +1,13 @@
+# =====================================================================
+# Local development profile (active by default - see spring.profiles.default)
+# =====================================================================
+
+app:
+  security:
+    # Local only. mcp-client-service uses the same default, so both work out of the box.
+    # Never use this value anywhere else: set MCP_API_KEY instead.
+    mcp-api-key: ${MCP_API_KEY:local-dev-mcp-api-key-0123456789abcdef}
+
+logging:
+  level:
+    com.grocery: DEBUG

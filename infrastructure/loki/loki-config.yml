@@ -1,0 +1,53 @@
+# ---------------------------------------------------------------------
+# Grafana Loki for local development (docker-compose.yml, profile "monitoring").
+#
+# One Loki process stores everything on the Docker volume "loki-data" and keeps the logs for 7 days.
+# The services push their log lines to http://localhost:3100/loki/api/v1/push (logback-spring.xml, loki4j appender)
+# when they run with LOKI_ENABLED=true. Grafana reads them: http://localhost:3000 -> Explore -> Loki, or the
+# dashboard "Grocery logs".
+#
+# In production Loki runs as its own cluster (or Grafana Cloud) with object storage (S3, GCS ...);
+# only the URL in LOKI_URL changes for the services.
+# ---------------------------------------------------------------------
+
+auth_enabled: false                  # one tenant: the services need no X-Scope-OrgID header
+
+server:
+  http_listen_port: 3100
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  replication_factor: 1              # one copy is enough on a developer machine
+  ring:
+    kvstore:
+      store: inmemory
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+
+# How the index is stored. v13 + tsdb is the current format; it supports structured metadata.
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  retention_period: 168h             # keep logs for 7 days (deleted by the compactor below)
+  allow_structured_metadata: true    # correlationId, traceId, outcome, durationMs ... as fields of each line
+  volume_enabled: true               # the log volume bars in Grafana Explore
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true            # really delete logs older than retention_period
+  delete_request_store: filesystem
+
+analytics:
+  reporting_enabled: false           # no usage statistics to Grafana Labs

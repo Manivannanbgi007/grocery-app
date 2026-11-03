@@ -1,0 +1,48 @@
+{
+  "type": "record",
+  "name": "DeliveryAssigned",
+  "namespace": "com.grocery.events.delivery",
+  "doc": "A delivery partner was assigned to an order that is ready for pickup. order-service shows the partner on the order; notification-service tells the customer and the partner. Producer: delivery-service. Topic: grocery.delivery.events, key = orderId.",
+  "fields": [
+    {
+      "name": "eventId",
+      "type": "string",
+      "doc": "Unique id of this event (UUID). Consumers use it to skip duplicates."
+    },
+    {
+      "name": "occurredAt",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      }
+    },
+    {
+      "name": "deliveryId",
+      "type": "long"
+    },
+    {
+      "name": "orderId",
+      "type": "long"
+    },
+    {
+      "name": "customerUserId",
+      "type": "long"
+    },
+    {
+      "name": "storeId",
+      "type": "long"
+    },
+    {
+      "name": "partnerUserId",
+      "type": "long"
+    },
+    {
+      "name": "partnerName",
+      "type": "string"
+    },
+    {
+      "name": "partnerPhone",
+      "type": "string"
+    }
+  ]
+}

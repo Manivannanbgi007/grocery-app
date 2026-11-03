@@ -1,0 +1,163 @@
+### =====================================================================
+### inventory-service - ready-to-run requests
+###
+### Works with the VS Code "REST Client" extension and the IntelliJ HTTP Client.
+### Calls the service DIRECTLY on port 8106, so we send the X-User-* / X-Store-Id headers
+### ourselves (normally the API gateway adds them from the JWT).
+###
+### Seed data (docs/seed-data.md), low-stock threshold 5 everywhere:
+###   store 1 Fresh Mart   (vendor1 = user 3): products 1-10 and 17
+###       7 Amul Butter = 3 units (LOW), 17 Mango Alphonso = 0 (OUT OF STOCK)
+###   store 2 Green Basket (vendor2 = user 6): products 11-16
+###       13 Pomegranate = 0 (OUT OF STOCK), 14 Nandini Curd = 4 (LOW)
+###
+### Creating the FIRST stock for a product calls product-read-service (port 8105)
+### to check that the product belongs to the vendor's store.
+### Requests 15-16 put the seed values back.
+### =====================================================================
+
+@baseUrl = http://localhost:8106
+
+
+### 1. INTERNAL: publish the current stock of every product as StockChanged events.
+#    Run once after the first start: the seed rows were inserted by SQL, so no event exists for them yet.
+#    Afterwards product-read-service shows stock in search.
+POST {{baseUrl}}/internal/inventory/stock-snapshot
+
+
+### 2. VENDOR (store 1): my stock, page 1
+GET {{baseUrl}}/api/v1/vendor/inventory?page=0&size=20
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+
+### 3. VENDOR (store 1): only items that need restocking -> products 7 and 17
+GET {{baseUrl}}/api/v1/vendor/inventory?lowStockOnly=true
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+
+### 4. VENDOR (store 1): stock of Tomato (product 1)
+GET {{baseUrl}}/api/v1/vendor/inventory/1
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+
+### 5. VENDOR (store 1): counted the shelf - Tomato is now 100 units, alert at 10
+PUT {{baseUrl}}/api/v1/vendor/inventory/1
+Content-Type: application/json
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+{
+  "quantityOnHand": 100,
+  "lowStockThreshold": 10
+}
+
+
+### 6. VENDOR (store 1): 20 units of Amul Butter arrived -> 23, no longer low
+POST {{baseUrl}}/api/v1/vendor/inventory/7/additions
+Content-Type: application/json
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+{
+  "quantity": 20
+}
+
+
+### 7. VENDOR (store 1): Amul Butter down to 2 -> low again: publishes StockChanged AND LowStockDetected
+PUT {{baseUrl}}/api/v1/vendor/inventory/7
+Content-Type: application/json
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+{
+  "quantityOnHand": 2
+}
+
+
+### 8. VENDOR (store 1): product 11 belongs to store 2 -> 404 (as if it did not exist)
+GET {{baseUrl}}/api/v1/vendor/inventory/11
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+
+### 9. VENDOR (store 1): unknown product -> 404 from the product check in product-read-service
+#    (503 if product-read-service is not running)
+PUT {{baseUrl}}/api/v1/vendor/inventory/999
+Content-Type: application/json
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+{
+  "quantityOnHand": 10
+}
+
+
+### 10. VENDOR (store 1): invalid numbers -> 400 with one error per field
+PUT {{baseUrl}}/api/v1/vendor/inventory/1
+Content-Type: application/json
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+{
+  "quantityOnHand": -1,
+  "lowStockThreshold": -5
+}
+
+
+### 11. VENDOR without an approved store (user 10, no X-Store-Id) -> 403
+GET {{baseUrl}}/api/v1/vendor/inventory
+X-User-Id: 10
+X-User-Role: VENDOR
+
+
+### 12. ADMIN: low stock across ALL stores -> 7, 13, 14, 17
+GET {{baseUrl}}/api/v1/admin/inventory?lowStockOnly=true
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 13. ADMIN: all stock of store 2, highest quantity first
+GET {{baseUrl}}/api/v1/admin/inventory?storeId=2&sort=quantityOnHand,desc
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 14. INTERNAL: stock of Pomegranate (product 13) - used by other services
+GET {{baseUrl}}/internal/inventory/products/13
+
+
+### 15. RESET: Tomato back to the seed values (120 units, threshold 5)
+PUT {{baseUrl}}/api/v1/vendor/inventory/1
+Content-Type: application/json
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+{
+  "quantityOnHand": 120,
+  "lowStockThreshold": 5
+}
+
+
+### 16. RESET: Amul Butter back to the seed value (3 units)
+PUT {{baseUrl}}/api/v1/vendor/inventory/7
+Content-Type: application/json
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+{
+  "quantityOnHand": 3
+}

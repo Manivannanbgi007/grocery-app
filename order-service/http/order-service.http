@@ -1,0 +1,183 @@
+### =====================================================================
+### order-service - ready-to-run requests
+###
+### Works with the VS Code "REST Client" extension and the IntelliJ HTTP Client.
+### Calls the service DIRECTLY on port 8108, so we send the X-User-* / X-Store-Id headers
+### ourselves (normally the API gateway adds them from the JWT).
+###
+### Placing an order needs cart-service, customer-service and store-service; the order only becomes
+### CONFIRMED when inventory-service and payment-service are running too (and the connectors are registered).
+### Seed data: customer1 (user 4) has a Fresh Mart cart worth 201.00 and a HOME address (id 1, PIN 560038).
+### The full flow through the gateway is in e2e/phase7-order-saga.http.
+### =====================================================================
+
+@baseUrl = http://localhost:8108
+@orderId = {{placed.response.body.$.data.id}}
+
+
+### 1. CUSTOMER (user 4): place an order from my cart, cash on delivery -> 201 PENDING
+# @name placed
+POST {{baseUrl}}/api/v1/orders
+Content-Type: application/json
+X-User-Id: 4
+X-User-Role: CUSTOMER
+
+{
+  "addressId": 1,
+  "paymentMethod": "COD",
+  "note": "Please ring the bell twice"
+}
+
+
+### 2. (wait) CUSTOMER: my order -> CONFIRMED once stock and payment are settled, with the timeline
+# @wait 4
+GET {{baseUrl}}/api/v1/orders/{{orderId}}
+X-User-Id: 4
+X-User-Role: CUSTOMER
+
+
+### 3. CUSTOMER: my order history, newest first
+GET {{baseUrl}}/api/v1/orders?page=0&size=10
+X-User-Id: 4
+X-User-Role: CUSTOMER
+
+
+### 4. CUSTOMER: placing again with the (now empty) cart -> 409 "Your cart is empty"
+POST {{baseUrl}}/api/v1/orders
+Content-Type: application/json
+X-User-Id: 4
+X-User-Role: CUSTOMER
+
+{
+  "addressId": 1,
+  "paymentMethod": "COD"
+}
+
+
+### 5. CUSTOMER: invalid request -> 400 (addressId missing, unknown payment method)
+POST {{baseUrl}}/api/v1/orders
+Content-Type: application/json
+X-User-Id: 4
+X-User-Role: CUSTOMER
+
+{
+  "paymentMethod": "CHEQUE"
+}
+
+
+### 6. CUSTOMER (user 7): someone else's order -> 404
+GET {{baseUrl}}/api/v1/orders/{{orderId}}
+X-User-Id: 7
+X-User-Role: CUSTOMER
+
+
+### 7. VENDOR (store 1): new orders waiting for me
+GET {{baseUrl}}/api/v1/vendor/orders?status=CONFIRMED
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+
+### 8. VENDOR (store 2): an order of store 1 -> 404
+GET {{baseUrl}}/api/v1/vendor/orders/{{orderId}}
+X-User-Id: 6
+X-User-Role: VENDOR
+X-Store-Id: 2
+
+
+### 9. VENDOR (store 1): accept
+POST {{baseUrl}}/api/v1/vendor/orders/{{orderId}}/accept
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+
+### 10. VENDOR (store 1): accept again -> 400 (ACCEPTED cannot become ACCEPTED)
+POST {{baseUrl}}/api/v1/vendor/orders/{{orderId}}/accept
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+
+### 11. VENDOR (store 1): packed
+POST {{baseUrl}}/api/v1/vendor/orders/{{orderId}}/pack
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+
+### 12. VENDOR (store 1): ready for pickup (publishes OrderReadyForPickup with both addresses)
+POST {{baseUrl}}/api/v1/vendor/orders/{{orderId}}/ready-for-pickup
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+
+### 13. ADMIN: orders waiting for a delivery partner
+GET {{baseUrl}}/api/v1/admin/orders?status=READY_FOR_PICKUP
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 14. CUSTOMER: track it - deliveryPartnerName appears once delivery-service assigns a partner
+#     (the partner's steps - pick up, deliver - are in delivery-service/http/delivery-service.http)
+GET {{baseUrl}}/api/v1/orders/{{orderId}}
+X-User-Id: 4
+X-User-Role: CUSTOMER
+
+
+### 15. CUSTOMER: still possible to cancel while it waits for a partner (READY_FOR_PICKUP)
+#     Skip this request if you want to follow the order through delivery.
+POST {{baseUrl}}/api/v1/orders/{{orderId}}/cancel
+Content-Type: application/json
+X-User-Id: 4
+X-User-Role: CUSTOMER
+
+{
+  "reason": "Changed my mind"
+}
+
+
+### 16. ADMIN: orders whose delivery failed (stock returned, payment refunded or cancelled)
+GET {{baseUrl}}/api/v1/admin/orders?status=DELIVERY_FAILED
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 17. INTERNAL: any order (other services)
+GET {{baseUrl}}/internal/orders/{{orderId}}
+
+
+### =====================================================================
+### Invoices (Phase 11): a PDF once the store accepted the order. Use an accepted or delivered order in @invoiceOrderId.
+### Once the order is paid (online, or COD after delivery) the first download stores the PDF under
+### app.invoice.storage-dir (./data/invoices) and later downloads read that file: send 18 twice and the
+### log shows "generated and stored" only the first time. Unpaid COD is generated every time, not stored.
+### =====================================================================
+
+@invoiceOrderId = 1
+
+
+### 18. CUSTOMER (user 4): the tax invoice of my order (PDF download)
+GET {{baseUrl}}/api/v1/orders/{{invoiceOrderId}}/invoice
+X-User-Id: 4
+X-User-Role: CUSTOMER
+
+
+### 19. VENDOR (store 1): print the invoice to put in the bag
+GET {{baseUrl}}/api/v1/vendor/orders/{{invoiceOrderId}}/invoice
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+
+### 20. ADMIN: any order's invoice
+GET {{baseUrl}}/api/v1/admin/orders/{{invoiceOrderId}}/invoice
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 21. CUSTOMER: the invoice of a cancelled or pending order -> 400 (request 1 placed one; it was cancelled in 15)
+GET {{baseUrl}}/api/v1/orders/{{orderId}}/invoice
+X-User-Id: 4
+X-User-Role: CUSTOMER

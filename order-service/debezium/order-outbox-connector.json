@@ -1,0 +1,44 @@
+{
+  "name": "order-outbox-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.mysql.MySqlConnector",
+    "tasks.max": "1",
+
+    "database.hostname": "mysql",
+    "database.port": "3306",
+    "database.user": "debezium",
+    "database.password": "debezium_pass",
+    "database.server.id": "10108",
+    "topic.prefix": "order-outbox",
+
+    "database.include.list": "order_db",
+    "table.include.list": "order_db.outbox_event",
+    "snapshot.mode": "no_data",
+    "include.schema.changes": "false",
+    "tombstones.on.delete": "false",
+    "heartbeat.interval.ms": "10000",
+    "errors.tolerance": "none",
+    "errors.max.retries": "-1",
+    "schema.history.internal.kafka.bootstrap.servers": "kafka:29092",
+    "schema.history.internal.kafka.topic": "_schema-history.order-outbox",
+
+    "transforms": "outbox",
+    "predicates": "isHeartbeat",
+    "predicates.isHeartbeat.type": "org.apache.kafka.connect.transforms.predicates.TopicNameMatches",
+    "predicates.isHeartbeat.pattern": "__debezium-heartbeat\\..*",
+    "transforms.outbox.predicate": "isHeartbeat",
+    "transforms.outbox.negate": "true",
+    "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
+    "transforms.outbox.table.field.event.id": "id",
+    "transforms.outbox.table.field.event.key": "aggregate_id",
+    "transforms.outbox.table.field.event.payload": "payload",
+    "transforms.outbox.route.by.field": "aggregate_type",
+    "transforms.outbox.route.topic.replacement": "grocery.${routedByValue}.events",
+    "transforms.outbox.table.fields.additional.placement": "event_type:header:eventType,traceparent:header:traceparent",
+
+    "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+    "value.converter": "io.debezium.converters.BinaryDataConverter",
+    "value.converter.delegate.converter.type": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.delegate.converter.type.schemas.enable": "false"
+  }
+}

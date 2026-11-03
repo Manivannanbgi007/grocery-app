@@ -1,0 +1,120 @@
+# Prometheus: collects the metrics of every service every 15 s, checks their health, and evaluates the alert rules.
+# Guide: docs/observability.md
+#
+# Keep the job name "grocery-services" and the "service" label: the Grafana dashboards, the alert rules and the
+# website's System page (fresh-grocery, super admin) query them.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s          # how often the alert rules are checked
+  external_labels:
+    environment: local              # added to every alert (and to the alert emails)
+
+# The alert rules (alerts/grocery-alerts.yml). Their unit tests are in tests/ (see docs/observability.md).
+rule_files:
+  - /etc/prometheus/alerts/grocery-alerts.yml
+  - /etc/prometheus/alerts/slo-rules.yml          # service level objectives: recording rules + error budget alerts
+
+# Firing alerts go to Alertmanager, which groups them and sends emails (to Mailpit locally).
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  # 1. Metrics of every service (Micrometer, /actuator/prometheus). The list of services: targets/services.yml.
+  #    A service that is not running shows as down (up == 0) and fires the ServiceDown alert after 1 minute.
+  - job_name: grocery-services
+    metrics_path: /actuator/prometheus
+    file_sd_configs:
+      - files: [/etc/prometheus/targets/services.yml]
+
+  # 2. Health of every service: the blackbox exporter calls http://<service>/actuator/health and reports
+  #    probe_success = 1 (answered 200 with "status":"UP") or 0 (DOWN, error or no answer within 5 s).
+  - job_name: service-health
+    metrics_path: /probe
+    params:
+      module: [spring_health]       # defined in infrastructure/blackbox/blackbox.yml
+    file_sd_configs:
+      - files: [/etc/prometheus/targets/services.yml]
+    relabel_configs:
+      # target "host.docker.internal:8101" -> ask the exporter to check http://host.docker.internal:8101/actuator/health
+      - source_labels: [__address__]
+        regex: (.+)
+        target_label: __param_target
+        replacement: http://$1/actuator/health
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  # 3a. The Kafka broker itself: the blackbox exporter opens a TCP connection to it every 15 s
+  #     (probe_success = 1 or 0, alert KafkaDown).
+  - job_name: kafka-broker
+    metrics_path: /probe
+    params:
+      module: [tcp_connect]         # defined in infrastructure/blackbox/blackbox.yml
+    static_configs:
+      - targets: ["kafka:29092"]    # the listener for containers (the services on the host use localhost:9092)
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  # 3. Kafka consumer groups and topics, read from the broker by the Kafka exporter (docker-compose.yml):
+  #    kafka_consumergroup_lag (events a group still has to read, per topic and partition; -1 = the group never
+  #    committed on that partition yet), kafka_consumergroup_current_offset, kafka_topic_partition_current_offset.
+  #    The consumer group of a service has the service's name (spring.application.name).
+  - job_name: kafka-exporter
+    static_configs:
+      - targets: ["kafka-exporter:9308"]
+        labels:
+          tool: kafka-exporter
+
+  # 4. Kafka Connect and the Debezium connectors (JMX exporter agent, rules in kafka-connect/jmx-exporter.yml):
+  #    debezium_mysql_connected, kafka_connect_connector_tasks, kafka_connect_source_records_written_total ...
+  - job_name: kafka-connect
+    static_configs:
+      - targets: ["kafka-connect:9404"]
+
+  # 5. The data stores, through their exporters (docker-compose.yml). Each exporter reports whether it can reach its
+  #    store: mysql_up, redis_up, elasticsearch_cluster_health_status ... (MySQLDown, RedisDown ... alerts).
+  - job_name: mysql
+    static_configs:
+      - targets: ["mysqld-exporter:9104"]
+        labels:
+          tool: mysqld-exporter
+  - job_name: redis
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+        labels:
+          tool: redis-exporter
+  - job_name: elasticsearch
+    static_configs:
+      - targets: ["elasticsearch-exporter:9114"]
+        labels:
+          tool: elasticsearch-exporter
+
+  # 6. The monitoring tools themselves, so an alert fires when one of them is down (MonitoringToolDown).
+  - job_name: monitoring
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          tool: prometheus
+      - targets: ["alertmanager:9093"]
+        labels:
+          tool: alertmanager
+      - targets: ["blackbox-exporter:9115"]
+        labels:
+          tool: blackbox-exporter
+      - targets: ["jaeger:8888"]
+        labels:
+          tool: jaeger
+      - targets: ["loki:3100"]
+        labels:
+          tool: loki
+      - targets: ["grafana:3000"]
+        labels:
+          tool: grafana

@@ -1,0 +1,41 @@
+{
+  "type": "record",
+  "name": "OrderCancelled",
+  "namespace": "com.grocery.events.order",
+  "doc": "The order was cancelled (by the customer, an admin, or the system because stock or payment failed). Compensation: inventory releases the stock, payment-service refunds a paid order, cart-service frees the coupon. Producer: order-service. Topic: grocery.order.events, key = orderId.",
+  "fields": [
+    {
+      "name": "eventId",
+      "type": "string",
+      "doc": "Unique id of this event (UUID). Consumers use it to skip duplicates."
+    },
+    {
+      "name": "occurredAt",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      }
+    },
+    {
+      "name": "orderId",
+      "type": "long"
+    },
+    {
+      "name": "customerUserId",
+      "type": "long"
+    },
+    {
+      "name": "storeId",
+      "type": "long"
+    },
+    {
+      "name": "reason",
+      "type": "string"
+    },
+    {
+      "name": "cancelledBy",
+      "type": "string",
+      "doc": "CUSTOMER, ADMIN or SYSTEM"
+    }
+  ]
+}

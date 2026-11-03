@@ -1,0 +1,53 @@
+# The Spring Boot services Prometheus watches (read by prometheus.yml, twice):
+#   job "grocery-services" reads the metrics:      http://<target>/actuator/prometheus
+#   job "service-health"   checks the health:       http://<target>/actuator/health   (through the blackbox exporter)
+# A new service = one more entry here. Prometheus notices the change by itself (no restart).
+# The services run on your machine (outside Docker), so Prometheus reaches them through host.docker.internal.
+- targets: ["host.docker.internal:8080"]
+  labels:
+    service: api-gateway
+- targets: ["host.docker.internal:8101"]
+  labels:
+    service: auth-service
+- targets: ["host.docker.internal:8102"]
+  labels:
+    service: customer-service
+- targets: ["host.docker.internal:8103"]
+  labels:
+    service: store-service
+- targets: ["host.docker.internal:8104"]
+  labels:
+    service: product-service
+- targets: ["host.docker.internal:8105"]
+  labels:
+    service: product-read-service
+- targets: ["host.docker.internal:8106"]
+  labels:
+    service: inventory-service
+- targets: ["host.docker.internal:8107"]
+  labels:
+    service: cart-service
+- targets: ["host.docker.internal:8108"]
+  labels:
+    service: order-service
+- targets: ["host.docker.internal:8109"]
+  labels:
+    service: payment-service
+- targets: ["host.docker.internal:8110"]
+  labels:
+    service: delivery-service
+- targets: ["host.docker.internal:8111"]
+  labels:
+    service: notification-service
+- targets: ["host.docker.internal:8112"]
+  labels:
+    service: report-service
+- targets: ["host.docker.internal:8113"]
+  labels:
+    service: platform-service
+- targets: ["host.docker.internal:8114"]
+  labels:
+    service: mcp-client-service
+- targets: ["host.docker.internal:8115"]
+  labels:
+    service: mcp-server-service

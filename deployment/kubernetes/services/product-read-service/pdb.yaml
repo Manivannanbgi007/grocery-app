@@ -1,0 +1,15 @@
+# product-read-service: keep at least 2 pods running during planned maintenance (kubectl drain of a node, upgrades).
+# Kubernetes then moves the pods one at a time. It does not protect against crashes; replicas do that.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: product-read-service
+  namespace: grocery
+  labels:
+    app: product-read-service
+    app.kubernetes.io/part-of: grocery
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: product-read-service

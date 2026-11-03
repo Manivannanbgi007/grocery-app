@@ -1,0 +1,544 @@
+### =====================================================================
+### END-TO-END (Phase 9): delivery partners, through the API gateway (port 8080)
+###
+###   A. A new partner registers -> KYC -> admin rejects, partner fixes it -> admin approves -> online
+###   B. ONLINE order: delivery1 rejects it -> reassigned to the new partner -> customer not at home
+###      -> DELIVERY_FAILED: stock released, money refunded, both sides notified -> items returned to the store
+###   C. Nobody online -> the delivery waits -> admin assigns it -> COD delivered with a proof photo -> earnings
+###   D. The customer cancels while the partner is on the way to the store -> the delivery is cancelled
+###
+### Needs: infrastructure + every service of Phases 1-9 + the connectors (scripts\register-connectors.ps1).
+### Written for the VS Code "REST Client" extension. Run the requests IN ORDER.
+### Every run registers a new delivery partner ({{$timestamp}} makes the email unique).
+### =====================================================================
+
+@gatewayUrl = http://localhost:8080
+
+@customerToken = {{customerLogin.response.body.$.data.accessToken}}
+@customer2Token = {{customer2Login.response.body.$.data.accessToken}}
+@vendorToken = {{vendorLogin.response.body.$.data.accessToken}}
+@adminToken = {{adminLogin.response.body.$.data.accessToken}}
+@partnerToken = {{partnerLogin.response.body.$.data.accessToken}}
+@newPartnerToken = {{newPartner.response.body.$.data.accessToken}}
+@newPartnerId = {{newPartner.response.body.$.data.user.id}}
+@failedOrderId = {{failedOrder.response.body.$.data.id}}
+@failedDeliveryId = {{offeredToDelivery1.response.body.$.data.content[0].id}}
+@codOrderId = {{codOrder.response.body.$.data.id}}
+@codDeliveryId = {{waiting.response.body.$.data.content[0].id}}
+@proofUrl = {{proof.response.body.$.data.proofPhotoUrl}}
+@cancelOrderId = {{cancelOrder.response.body.$.data.id}}
+
+
+### 1. customer1 (user 4) logs in
+# @name customerLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "customer1@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 2. customer2 (user 7) logs in
+# @name customer2Login
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "customer2@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 3. vendor1 (Fresh Mart, store 1, PIN 560038 = zone 1 Indiranagar) logs in
+# @name vendorLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "vendor1@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 4. The admin logs in
+# @name adminLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 5. delivery1 (Arjun Singh, user 5, zone 1) logs in
+# @name partnerLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "delivery1@grocery.com",
+  "password": "Password@123"
+}
+
+
+### ===== A. A new delivery partner joins =====
+
+### 6. Neha registers as a delivery partner (public) -> UserRegistered
+# @name newPartner
+POST {{gatewayUrl}}/api/v1/auth/register
+Content-Type: application/json
+
+{
+  "fullName": "Neha Gupta",
+  "email": "neha.{{$timestamp}}@example.com",
+  "phone": "8{{$randomInt 100000000 999999999}}",
+  "password": "Password@123",
+  "role": "DELIVERY_PARTNER"
+}
+
+
+### 7. (wait) delivery-service created her profile from UserRegistered: KYC NOT_SUBMITTED
+# @wait 3
+GET {{gatewayUrl}}/api/v1/delivery/profile
+Authorization: Bearer {{newPartnerToken}}
+
+
+### 8. Going online before the KYC is approved -> 400
+POST {{gatewayUrl}}/api/v1/delivery/availability/online
+Authorization: Bearer {{newPartnerToken}}
+
+
+### 9. KYC with mistakes -> 400 with one error per field
+PUT {{gatewayUrl}}/api/v1/delivery/profile/kyc
+Authorization: Bearer {{newPartnerToken}}
+Content-Type: application/json
+
+{
+  "vehicleType": "SCOOTER",
+  "vehicleNumber": "my scooter",
+  "drivingLicenseNumber": "",
+  "zoneId": null
+}
+
+
+### 10. KYC for zone 1 (Indiranagar) -> PENDING
+PUT {{gatewayUrl}}/api/v1/delivery/profile/kyc
+Authorization: Bearer {{newPartnerToken}}
+Content-Type: application/json
+
+{
+  "vehicleType": "SCOOTER",
+  "vehicleNumber": "KA03MN4521",
+  "drivingLicenseNumber": "KA0320210004521",
+  "zoneId": 1
+}
+
+
+### 11. Admin: partners waiting for a KYC decision
+GET {{gatewayUrl}}/api/v1/admin/delivery-partners?kycStatus=PENDING
+Authorization: Bearer {{adminToken}}
+
+
+### 12. Admin rejects it with a reason -> REJECTED
+POST {{gatewayUrl}}/api/v1/admin/delivery-partners/{{newPartnerId}}/reject
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "reason": "The driving licence number does not match the photo"
+}
+
+
+### 13. Neha sends corrected details -> PENDING again
+PUT {{gatewayUrl}}/api/v1/delivery/profile/kyc
+Authorization: Bearer {{newPartnerToken}}
+Content-Type: application/json
+
+{
+  "vehicleType": "SCOOTER",
+  "vehicleNumber": "KA03MN4521",
+  "drivingLicenseNumber": "KA0320210004512",
+  "zoneId": 1
+}
+
+
+### 14. Admin approves -> APPROVED
+POST {{gatewayUrl}}/api/v1/admin/delivery-partners/{{newPartnerId}}/approve
+Authorization: Bearer {{adminToken}}
+
+
+### 15. Neha goes online (for 30 minutes)
+POST {{gatewayUrl}}/api/v1/delivery/availability/online
+Authorization: Bearer {{newPartnerToken}}
+
+
+### ===== B. Rejected, reassigned, delivery failed -> compensation =====
+
+### 16. delivery1 goes online too (zone 1 now has two online partners; the lowest user id is asked first)
+POST {{gatewayUrl}}/api/v1/delivery/availability/online
+Authorization: Bearer {{partnerToken}}
+
+
+### 17. customer1 starts with an empty cart
+DELETE {{gatewayUrl}}/api/v1/cart
+Authorization: Bearer {{customerToken}}
+
+
+### 18. ...adds 2 dozen bananas (2 x 60.00)
+POST {{gatewayUrl}}/api/v1/cart/items
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "productId": 4,
+  "quantity": 2
+}
+
+
+### 19. ...and orders ONLINE to the HOME address (1)
+# @name failedOrder
+POST {{gatewayUrl}}/api/v1/orders
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "addressId": 1,
+  "paymentMethod": "ONLINE"
+}
+
+
+### 20. (wait) Stock reserved -> AWAITING_PAYMENT; pay with the mock gateway -> PAID
+# @wait 4
+POST {{gatewayUrl}}/api/v1/payments/orders/{{failedOrderId}}/mock-pay
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "success": true
+}
+
+
+### 21. (wait) vendor1 accepts the CONFIRMED order
+# @wait 3
+POST {{gatewayUrl}}/api/v1/vendor/orders/{{failedOrderId}}/accept
+Authorization: Bearer {{vendorToken}}
+
+
+### 22. ...packs it
+POST {{gatewayUrl}}/api/v1/vendor/orders/{{failedOrderId}}/pack
+Authorization: Bearer {{vendorToken}}
+
+
+### 23. ...and hands it over -> OrderReadyForPickup
+POST {{gatewayUrl}}/api/v1/vendor/orders/{{failedOrderId}}/ready-for-pickup
+Authorization: Bearer {{vendorToken}}
+
+
+### 24. (wait) delivery-service created the delivery and offered it to delivery1 (ASSIGNED)
+# @wait 3
+# @name offeredToDelivery1
+GET {{gatewayUrl}}/api/v1/delivery/deliveries?active=true
+Authorization: Bearer {{partnerToken}}
+
+
+### 25. delivery1 rejects it -> it goes straight to Neha
+POST {{gatewayUrl}}/api/v1/delivery/deliveries/{{failedDeliveryId}}/reject
+Authorization: Bearer {{partnerToken}}
+
+
+### 26. Neha's current delivery: the same one, ASSIGNED to her
+GET {{gatewayUrl}}/api/v1/delivery/deliveries?active=true
+Authorization: Bearer {{newPartnerToken}}
+
+
+### 27. (wait) Neha got a "New delivery" notification (in-app + email)
+# @wait 2
+GET {{gatewayUrl}}/api/v1/notifications
+Authorization: Bearer {{newPartnerToken}}
+
+
+### 28. delivery1 can no longer act on it -> 404 (a partner only sees their own deliveries)
+POST {{gatewayUrl}}/api/v1/delivery/deliveries/{{failedDeliveryId}}/accept
+Authorization: Bearer {{partnerToken}}
+
+
+### 29. Neha accepts it
+POST {{gatewayUrl}}/api/v1/delivery/deliveries/{{failedDeliveryId}}/accept
+Authorization: Bearer {{newPartnerToken}}
+
+
+### 30. ...picks it up (order OUT_FOR_DELIVERY)
+POST {{gatewayUrl}}/api/v1/delivery/deliveries/{{failedDeliveryId}}/pick-up
+Authorization: Bearer {{newPartnerToken}}
+
+
+### 31. ...drives to the customer
+POST {{gatewayUrl}}/api/v1/delivery/deliveries/{{failedDeliveryId}}/start
+Authorization: Bearer {{newPartnerToken}}
+
+
+### 32. Nobody at the door -> FAILED (DeliveryFailed)
+POST {{gatewayUrl}}/api/v1/delivery/deliveries/{{failedDeliveryId}}/issue
+Authorization: Bearer {{newPartnerToken}}
+Content-Type: application/json
+
+{
+  "issue": "CUSTOMER_UNAVAILABLE",
+  "note": "Nobody at the door, phone switched off"
+}
+
+
+### 33. (wait) The order is DELIVERY_FAILED; the online payment was refunded -> paymentStatus REFUNDED
+# @wait 6
+GET {{gatewayUrl}}/api/v1/orders/{{failedOrderId}}
+Authorization: Bearer {{customerToken}}
+
+
+### 34. payment-service: REFUNDED (refundReference mock_refund_...)
+GET {{gatewayUrl}}/api/v1/payments/orders/{{failedOrderId}}
+Authorization: Bearer {{customerToken}}
+
+
+### 35. inventory-service: the bananas are not reserved any more
+GET {{gatewayUrl}}/api/v1/vendor/inventory/4
+Authorization: Bearer {{vendorToken}}
+
+
+### 36. Neha brings the items back to the store -> RETURNED (she is free for the next delivery)
+POST {{gatewayUrl}}/api/v1/delivery/deliveries/{{failedDeliveryId}}/return
+Authorization: Bearer {{newPartnerToken}}
+
+
+### 37. customer1 was told: delivery failed, refund
+GET {{gatewayUrl}}/api/v1/notifications
+Authorization: Bearer {{customerToken}}
+
+
+### 38. vendor1 was told: not delivered, items come back
+GET {{gatewayUrl}}/api/v1/notifications
+Authorization: Bearer {{vendorToken}}
+
+
+### ===== C. Nobody online -> admin assigns; cash on delivery with a proof photo =====
+
+### 39. delivery1 goes offline
+POST {{gatewayUrl}}/api/v1/delivery/availability/offline
+Authorization: Bearer {{partnerToken}}
+
+
+### 40. Neha goes offline
+POST {{gatewayUrl}}/api/v1/delivery/availability/offline
+Authorization: Bearer {{newPartnerToken}}
+
+
+### 41. customer2 (user 7) starts with an empty cart
+DELETE {{gatewayUrl}}/api/v1/cart
+Authorization: Bearer {{customer2Token}}
+
+
+### 42. ...adds 3 x Lay's (3 x 20.00)
+POST {{gatewayUrl}}/api/v1/cart/items
+Authorization: Bearer {{customer2Token}}
+Content-Type: application/json
+
+{
+  "productId": 9,
+  "quantity": 3
+}
+
+
+### 43. ...and 1 x Surf Excel (195.50)
+POST {{gatewayUrl}}/api/v1/cart/items
+Authorization: Bearer {{customer2Token}}
+Content-Type: application/json
+
+{
+  "productId": 10,
+  "quantity": 1
+}
+
+
+### 44. ...orders COD to the HOME address (3, PIN 560008)
+# @name codOrder
+POST {{gatewayUrl}}/api/v1/orders
+Authorization: Bearer {{customer2Token}}
+Content-Type: application/json
+
+{
+  "addressId": 3,
+  "paymentMethod": "COD"
+}
+
+
+### 45. (wait) vendor1 accepts the CONFIRMED order
+# @wait 4
+POST {{gatewayUrl}}/api/v1/vendor/orders/{{codOrderId}}/accept
+Authorization: Bearer {{vendorToken}}
+
+
+### 46. ...packs it
+POST {{gatewayUrl}}/api/v1/vendor/orders/{{codOrderId}}/pack
+Authorization: Bearer {{vendorToken}}
+
+
+### 47. ...and hands it over
+POST {{gatewayUrl}}/api/v1/vendor/orders/{{codOrderId}}/ready-for-pickup
+Authorization: Bearer {{vendorToken}}
+
+
+### 48. (wait) Admin: nobody is online, so the delivery waits (WAITING_FOR_PARTNER)
+# @wait 3
+# @name waiting
+GET {{gatewayUrl}}/api/v1/admin/deliveries?status=WAITING_FOR_PARTNER
+Authorization: Bearer {{adminToken}}
+
+
+### 49. Admin assigns it to delivery1 by hand -> ASSIGNED (DeliveryAssigned)
+POST {{gatewayUrl}}/api/v1/admin/deliveries/{{codDeliveryId}}/assign
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "partnerUserId": 5
+}
+
+
+### 50. delivery1 accepts it
+POST {{gatewayUrl}}/api/v1/delivery/deliveries/{{codDeliveryId}}/accept
+Authorization: Bearer {{partnerToken}}
+
+
+### 51. ...picks it up
+POST {{gatewayUrl}}/api/v1/delivery/deliveries/{{codDeliveryId}}/pick-up
+Authorization: Bearer {{partnerToken}}
+
+
+### 52. ...drives to the customer
+POST {{gatewayUrl}}/api/v1/delivery/deliveries/{{codDeliveryId}}/start
+Authorization: Bearer {{partnerToken}}
+
+
+### 53. ...takes a photo of the handed-over bag (proof of delivery)
+# @name proof
+POST {{gatewayUrl}}/api/v1/delivery/deliveries/{{codDeliveryId}}/proof
+Authorization: Bearer {{partnerToken}}
+Content-Type: multipart/form-data; boundary=GroceryBoundary
+
+--GroceryBoundary
+Content-Disposition: form-data; name="photo"; filename="proof.png"
+Content-Type: image/png
+
+< ./assets/sample-product.png
+--GroceryBoundary--
+
+
+### 54. ...collects 255.50 in cash and delivers -> DELIVERED, payout 40.00
+POST {{gatewayUrl}}/api/v1/delivery/deliveries/{{codDeliveryId}}/deliver
+Authorization: Bearer {{partnerToken}}
+
+
+### 55. (wait) customer2's order: DELIVERED by Arjun Singh, paymentStatus PAID (cash collected)
+# @wait 4
+GET {{gatewayUrl}}/api/v1/orders/{{codOrderId}}
+Authorization: Bearer {{customer2Token}}
+
+
+### 56. payment-service: COLLECTED
+GET {{gatewayUrl}}/api/v1/payments/orders/{{codOrderId}}
+Authorization: Bearer {{customer2Token}}
+
+
+### 57. The proof photo, through the gateway (any logged-in user)
+GET {{proofUrl}}
+Authorization: Bearer {{customer2Token}}
+
+
+### 58. delivery1's earnings this month (one line per day, India time)
+GET {{gatewayUrl}}/api/v1/delivery/earnings?from=2026-10-01&to=2026-12-31
+Authorization: Bearer {{partnerToken}}
+
+
+### 59. delivery1's completed deliveries
+GET {{gatewayUrl}}/api/v1/delivery/deliveries?active=false
+Authorization: Bearer {{partnerToken}}
+
+
+### ===== D. Cancelled while the partner is on the way to the store =====
+
+### 60. delivery1 goes online
+POST {{gatewayUrl}}/api/v1/delivery/availability/online
+Authorization: Bearer {{partnerToken}}
+
+
+### 61. customer1 adds 3 kg of tomatoes (3 x 36.00)
+POST {{gatewayUrl}}/api/v1/cart/items
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "productId": 1,
+  "quantity": 3
+}
+
+
+### 62. ...orders COD
+# @name cancelOrder
+POST {{gatewayUrl}}/api/v1/orders
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "addressId": 1,
+  "paymentMethod": "COD"
+}
+
+
+### 63. (wait) vendor1 accepts it
+# @wait 4
+POST {{gatewayUrl}}/api/v1/vendor/orders/{{cancelOrderId}}/accept
+Authorization: Bearer {{vendorToken}}
+
+
+### 64. ...packs it
+POST {{gatewayUrl}}/api/v1/vendor/orders/{{cancelOrderId}}/pack
+Authorization: Bearer {{vendorToken}}
+
+
+### 65. ...and hands it over
+POST {{gatewayUrl}}/api/v1/vendor/orders/{{cancelOrderId}}/ready-for-pickup
+Authorization: Bearer {{vendorToken}}
+
+
+### 66. (wait) The order shows delivery1 as its partner (DeliveryAssigned)
+# @wait 4
+GET {{gatewayUrl}}/api/v1/orders/{{cancelOrderId}}
+Authorization: Bearer {{customerToken}}
+
+
+### 67. The customer cancels: still allowed, nothing was picked up -> CANCELLED
+POST {{gatewayUrl}}/api/v1/orders/{{cancelOrderId}}/cancel
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "reason": "Ordered the wrong quantity"
+}
+
+
+### 68. (wait) delivery1 has no current delivery any more (the delivery is CANCELLED)
+# @wait 3
+GET {{gatewayUrl}}/api/v1/delivery/deliveries?active=true
+Authorization: Bearer {{partnerToken}}
+
+
+### 69. Admin: every delivery of Neha (one RETURNED)
+GET {{gatewayUrl}}/api/v1/admin/deliveries?partnerUserId={{newPartnerId}}
+Authorization: Bearer {{adminToken}}
+
+
+### 70. CLEAN UP: delivery1 goes offline
+POST {{gatewayUrl}}/api/v1/delivery/availability/offline
+Authorization: Bearer {{partnerToken}}

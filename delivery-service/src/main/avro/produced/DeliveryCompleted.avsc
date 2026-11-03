@@ -1,0 +1,53 @@
+{
+  "type": "record",
+  "name": "DeliveryCompleted",
+  "namespace": "com.grocery.events.delivery",
+  "doc": "The customer received the order. order-service: DELIVERED. Producer: delivery-service. Topic: grocery.delivery.events, key = orderId.",
+  "fields": [
+    {
+      "name": "eventId",
+      "type": "string",
+      "doc": "Unique id of this event (UUID). Consumers use it to skip duplicates."
+    },
+    {
+      "name": "occurredAt",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      }
+    },
+    {
+      "name": "deliveryId",
+      "type": "long"
+    },
+    {
+      "name": "orderId",
+      "type": "long"
+    },
+    {
+      "name": "customerUserId",
+      "type": "long"
+    },
+    {
+      "name": "storeId",
+      "type": "long"
+    },
+    {
+      "name": "partnerUserId",
+      "type": "long"
+    },
+    {
+      "name": "amountCollected",
+      "type": "string",
+      "doc": "Cash collected (COD) as decimal text, \"0.00\" for paid orders"
+    },
+    {
+      "name": "proofPhotoUrl",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    }
+  ]
+}

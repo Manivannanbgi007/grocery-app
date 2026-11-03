@@ -1,0 +1,211 @@
+### =====================================================================
+### mcp-server-service: the MCP tools of the AI assistant, called by hand
+###
+### MCP is JSON-RPC over HTTP: every request is a POST to /mcp with "method" and "params".
+### Normally only mcp-client-service calls this (the model decides which tool); these requests show what it gets.
+### Needs the API gateway and the catalog services running (the tools read live data through the gateway).
+### Run them in VS Code (REST Client extension) or IntelliJ IDEA.
+### =====================================================================
+
+@mcp = http://localhost:8115
+# The local default (application-local.yml). Never use it outside your machine.
+@apiKey = local-dev-mcp-api-key-0123456789abcdef
+
+### 1. Without the API key -> 401 {"success":false,"message":"A valid X-MCP-API-Key header is required", ...}
+POST {{mcp}}/mcp
+Content-Type: application/json
+Accept: application/json, text/event-stream
+
+{"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+
+### 2. Start: the server introduces itself (name grocery-tools, its instructions, "tools" capability)
+POST {{mcp}}/mcp
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-MCP-API-Key: {{apiKey}}
+
+{"jsonrpc": "2.0", "id": 2, "method": "initialize",
+ "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "http-file", "version": "1.0"}}}
+
+### 3. The 7 tools with their descriptions and parameter schemas (what the model sees)
+POST {{mcp}}/mcp
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-MCP-API-Key: {{apiKey}}
+
+{"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}}
+
+### 4. searchProducts: "amul butter" -> OK, prices as "₹56", stock "Only 3 left", store "Fresh Mart"
+POST {{mcp}}/mcp
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-MCP-API-Key: {{apiKey}}
+
+{"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "searchProducts", "arguments": {"query": "amul butter"}}}
+
+### 5. searchProducts: something the shop does not sell -> NOT_FOUND (the assistant must say so, never guess)
+POST {{mcp}}/mcp
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-MCP-API-Key: {{apiKey}}
+
+{"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "searchProducts", "arguments": {"query": "iphone 15"}}}
+
+### 6. searchProducts: a category by a loose name ("fruit" -> Fruits), up to ₹100, only in stock
+POST {{mcp}}/mcp
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-MCP-API-Key: {{apiKey}}
+
+{"jsonrpc": "2.0", "id": 6, "method": "tools/call",
+ "params": {"name": "searchProducts", "arguments": {"category": "fruit", "maxPrice": 100, "inStockOnly": true}}}
+
+### 7. searchProducts without arguments -> INVALID_INPUT with a hint how to call it
+POST {{mcp}}/mcp
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-MCP-API-Key: {{apiKey}}
+
+{"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "searchProducts", "arguments": {}}}
+
+### 8. getProductDetails by name (the best search match), as the model does in a follow-up ("is it in stock?")
+POST {{mcp}}/mcp
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-MCP-API-Key: {{apiKey}}
+
+{"jsonrpc": "2.0", "id": 8, "method": "tools/call", "params": {"name": "getProductDetails", "arguments": {"product": "amul butter"}}}
+
+### 9. getProductReviews by productId (from a searchProducts result): the rating and the 3 newest reviews
+POST {{mcp}}/mcp
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-MCP-API-Key: {{apiKey}}
+
+{"jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": {"name": "getProductReviews", "arguments": {"product": "1"}}}
+
+### 10. listCategories
+POST {{mcp}}/mcp
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-MCP-API-Key: {{apiKey}}
+
+{"jsonrpc": "2.0", "id": 10, "method": "tools/call", "params": {"name": "listCategories", "arguments": {}}}
+
+### 11. listCurrentOffers: every coupon once, with "All stores" / "Only at Fresh Mart"
+POST {{mcp}}/mcp
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-MCP-API-Key: {{apiKey}}
+
+{"jsonrpc": "2.0", "id": 11, "method": "tools/call", "params": {"name": "listCurrentOffers", "arguments": {}}}
+
+### 12. listCurrentOffers of one store (a part of the name is enough)
+POST {{mcp}}/mcp
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-MCP-API-Key: {{apiKey}}
+
+{"jsonrpc": "2.0", "id": 12, "method": "tools/call", "params": {"name": "listCurrentOffers", "arguments": {"storeName": "green basket"}}}
+
+### 13. getDeliveryRules: fee, free delivery from, minimum order, plus a summary sentence
+POST {{mcp}}/mcp
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-MCP-API-Key: {{apiKey}}
+
+{"jsonrpc": "2.0", "id": 13, "method": "tools/call", "params": {"name": "getDeliveryRules", "arguments": {}}}
+
+### 14. listStores: address, phone, "Open now", opening hours grouped by day
+POST {{mcp}}/mcp
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-MCP-API-Key: {{apiKey}}
+
+{"jsonrpc": "2.0", "id": 14, "method": "tools/call", "params": {"name": "listStores", "arguments": {}}}
+
+### 15. Customer tools: log in as customer1 (seed data) through the gateway ...
+# @name login
+POST http://localhost:8080/api/v1/auth/login
+Content-Type: application/json
+
+{"email": "customer1@grocery.com", "password": "Password@123"}
+
+### 16. ... getMyOrders with the customer's token in X-User-Token (mcp-client-service sends it for every logged-in user)
+POST {{mcp}}/mcp
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-MCP-API-Key: {{apiKey}}
+X-User-Token: {{login.response.body.data.accessToken}}
+
+{"jsonrpc": "2.0", "id": 16, "method": "tools/call", "params": {"name": "getMyOrders", "arguments": {}}}
+
+### 17. getMyCart with the token
+POST {{mcp}}/mcp
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-MCP-API-Key: {{apiKey}}
+X-User-Token: {{login.response.body.data.accessToken}}
+
+{"jsonrpc": "2.0", "id": 17, "method": "tools/call", "params": {"name": "getMyCart", "arguments": {}}}
+
+### 18. getMyOrders WITHOUT a token -> LOGIN_REQUIRED
+POST {{mcp}}/mcp
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-MCP-API-Key: {{apiKey}}
+
+{"jsonrpc": "2.0", "id": 18, "method": "tools/call", "params": {"name": "getMyOrders", "arguments": {}}}
+
+### 19. Panel tools: log in as vendor1 (seed data) through the gateway ...
+# @name vendorLogin
+POST http://localhost:8080/api/v1/auth/login
+Content-Type: application/json
+
+{"email": "vendor1@grocery.com", "password": "Password@123"}
+
+### 20. ... getVendorStoreToday with the vendor's token
+POST {{mcp}}/mcp
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-MCP-API-Key: {{apiKey}}
+X-User-Token: {{vendorLogin.response.body.data.accessToken}}
+
+{"jsonrpc": "2.0", "id": 20, "method": "tools/call", "params": {"name": "getVendorStoreToday", "arguments": {}}}
+
+### 21. getVendorOrders of one status ("new" = waiting for the store to accept)
+POST {{mcp}}/mcp
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-MCP-API-Key: {{apiKey}}
+X-User-Token: {{vendorLogin.response.body.data.accessToken}}
+
+{"jsonrpc": "2.0", "id": 21, "method": "tools/call", "params": {"name": "getVendorOrders", "arguments": {"status": "new"}}}
+
+### 22. Log in as admin (seed data) ...
+# @name adminLogin
+POST http://localhost:8080/api/v1/auth/login
+Content-Type: application/json
+
+{"email": "admin@grocery.com", "password": "Password@123"}
+
+### 23. ... getAdminWaitingWork with the admin's token
+POST {{mcp}}/mcp
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-MCP-API-Key: {{apiKey}}
+X-User-Token: {{adminLogin.response.body.data.accessToken}}
+
+{"jsonrpc": "2.0", "id": 23, "method": "tools/call", "params": {"name": "getAdminWaitingWork", "arguments": {}}}
+
+### 24. The admin tool with the vendor's token -> LOGIN_REQUIRED (the gateway answers 403)
+POST {{mcp}}/mcp
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-MCP-API-Key: {{apiKey}}
+X-User-Token: {{vendorLogin.response.body.data.accessToken}}
+
+{"jsonrpc": "2.0", "id": 24, "method": "tools/call", "params": {"name": "getAdminOverview", "arguments": {}}}
+
+### 25. Health (no API key needed): used by Kubernetes
+GET {{mcp}}/actuator/health

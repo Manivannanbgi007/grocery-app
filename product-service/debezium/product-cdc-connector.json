@@ -1,0 +1,44 @@
+{
+  "name": "product-cdc-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.mysql.MySqlConnector",
+    "tasks.max": "1",
+
+    "database.hostname": "mysql",
+    "database.port": "3306",
+    "database.user": "debezium",
+    "database.password": "debezium_pass",
+    "database.server.id": "10104",
+    "topic.prefix": "cdc",
+
+    "database.include.list": "product_db",
+    "table.include.list": "product_db.products,product_db.categories",
+    "snapshot.mode": "initial",
+    "include.schema.changes": "false",
+    "tombstones.on.delete": "false",
+    "heartbeat.interval.ms": "10000",
+    "errors.tolerance": "none",
+    "errors.max.retries": "-1",
+    "decimal.handling.mode": "string",
+    "time.precision.mode": "connect",
+    "schema.history.internal.kafka.bootstrap.servers": "kafka:29092",
+    "schema.history.internal.kafka.topic": "_schema-history.product-cdc",
+
+    "transforms": "unwrap,keyToId",
+    "predicates": "isHeartbeat",
+    "predicates.isHeartbeat.type": "org.apache.kafka.connect.transforms.predicates.TopicNameMatches",
+    "predicates.isHeartbeat.pattern": "__debezium-heartbeat\\..*",
+    "transforms.unwrap.predicate": "isHeartbeat",
+    "transforms.unwrap.negate": "true",
+    "transforms.keyToId.predicate": "isHeartbeat",
+    "transforms.keyToId.negate": "true",
+    "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
+    "transforms.unwrap.delete.tombstone.handling.mode": "rewrite",
+    "transforms.keyToId.type": "org.apache.kafka.connect.transforms.ExtractField$Key",
+    "transforms.keyToId.field": "id",
+
+    "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+    "value.converter": "io.confluent.connect.avro.AvroConverter",
+    "value.converter.schema.registry.url": "http://schema-registry:8081"
+  }
+}

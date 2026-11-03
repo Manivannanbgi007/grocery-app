@@ -1,0 +1,88 @@
+### =====================================================================
+### report-service - ready-to-run requests
+###
+### Works with the VS Code "REST Client" extension and the IntelliJ HTTP Client.
+### Calls the service DIRECTLY on port 8112, so we send the X-User-Id / X-User-Role / X-Store-Id headers
+### ourselves (normally the API gateway adds them from the JWT).
+###
+### The numbers come from events (orders, payments, stores, users, stock, partners). Place and deliver a few
+### orders first, e.g. with e2e/phase7-order-saga.http or e2e/mvp-order-flow.http.
+### Dates are India dates (yyyy-MM-dd), both days included.
+### =====================================================================
+
+@baseUrl = http://localhost:8112
+@today = {{$datetime "YYYY-MM-DD"}}
+
+
+### 1. ADMIN: the dashboard (orders, sales, revenue, active stores/partners/customers, refunds, out-of-stock, delivery time)
+GET {{baseUrl}}/api/v1/admin/reports/dashboard
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 2. ADMIN: sales per day of the last week (days without orders show zeros)
+GET {{baseUrl}}/api/v1/admin/reports/sales/daily?from=2026-10-20&to={{today}}
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 3. ADMIN: sales per day of Fresh Mart only
+GET {{baseUrl}}/api/v1/admin/reports/sales/daily?from=2026-10-20&to={{today}}&storeId=1
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 4. ADMIN: the 5 best-selling products (by quantity)
+GET {{baseUrl}}/api/v1/admin/reports/top-products?from=2026-10-01&to={{today}}&limit=5
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 5. ADMIN: the stores with the highest sales
+GET {{baseUrl}}/api/v1/admin/reports/top-stores?from=2026-10-01&to={{today}}
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 6. ADMIN: "from" after "to" -> 400
+GET {{baseUrl}}/api/v1/admin/reports/sales/daily?from=2026-10-31&to=2026-10-01
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 7. ADMIN: more than 366 days -> 400
+GET {{baseUrl}}/api/v1/admin/reports/top-stores?from=2025-01-01&to=2026-10-31
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 8. ADMIN: limit outside 1-50 -> 400
+GET {{baseUrl}}/api/v1/admin/reports/top-products?from=2026-10-01&to={{today}}&limit=500
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 9. VENDOR (store 1): my store's sales per day
+GET {{baseUrl}}/api/v1/vendor/reports/sales/daily?from=2026-10-20&to={{today}}
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+
+### 10. VENDOR (store 1): my best sellers
+GET {{baseUrl}}/api/v1/vendor/reports/top-products?from=2026-10-01&to={{today}}
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+
+### 11. VENDOR without a store -> 403
+GET {{baseUrl}}/api/v1/vendor/reports/sales/daily?from=2026-10-20&to={{today}}
+X-User-Id: 10
+X-User-Role: VENDOR
+
+
+### 12. SUPER_ADMIN: platform commission and store payout per store (orders delivered in the period)
+GET {{baseUrl}}/api/v1/super-admin/reports/commissions?from=2026-10-01&to={{today}}
+X-User-Id: 1
+X-User-Role: SUPER_ADMIN

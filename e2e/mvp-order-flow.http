@@ -1,0 +1,260 @@
+### =====================================================================
+### MVP END-TO-END: a NEW customer orders groceries, everything through the API gateway (port 8080)
+###
+###   register -> profile created by an event -> add an address -> search -> cart -> coupon
+###   -> place a COD order -> the saga confirms it -> the store accepts, packs, hands over
+###   -> the delivery partner accepts, picks up and delivers it -> tracking timeline, notifications, emails
+###
+### Needs: infrastructure + every service of Phases 1-9 + the connectors (scripts\register-connectors.ps1).
+### Emails: open Mailpit at http://localhost:8025 while you run this file.
+### Written for the VS Code "REST Client" extension. Run the requests IN ORDER.
+### Every run registers a new customer ({{$timestamp}} makes the email unique).
+### =====================================================================
+
+@gatewayUrl = http://localhost:8080
+
+@customerToken = {{register.response.body.$.data.accessToken}}
+@customerEmail = {{register.response.body.$.data.user.email}}
+@addressId = {{address.response.body.$.data.id}}
+@vendorToken = {{vendorLogin.response.body.$.data.accessToken}}
+@partnerToken = {{partnerLogin.response.body.$.data.accessToken}}
+@deliveryId = {{partnerDelivery.response.body.$.data.content[0].id}}
+@orderId = {{order.response.body.$.data.id}}
+
+
+### 1. A new customer registers (public) -> 201 with a token; publishes UserRegistered
+# @name register
+POST {{gatewayUrl}}/api/v1/auth/register
+Content-Type: application/json
+
+{
+  "fullName": "Kavya Rao",
+  "email": "kavya.{{$timestamp}}@example.com",
+  "phone": "9{{$randomInt 100000000 999999999}}",
+  "password": "Password@123",
+  "role": "CUSTOMER"
+}
+
+
+### 2. (wait) customer-service created the profile from UserRegistered
+# @wait 3
+GET {{gatewayUrl}}/api/v1/customers/me
+Authorization: Bearer {{customerToken}}
+
+
+### 3. Add a delivery address in Indiranagar (PIN 560038: Fresh Mart delivers there)
+# @name address
+POST {{gatewayUrl}}/api/v1/customers/me/addresses
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "label": "HOME",
+  "contactName": "Kavya Rao",
+  "contactPhone": "9845098450",
+  "addressLine1": "21, 12th Main, HAL 2nd Stage",
+  "landmark": "Near the metro station",
+  "city": "Bengaluru",
+  "state": "Karnataka",
+  "pincode": "560038"
+}
+
+
+### 4. Browse: Dairy & Eggs (category 3), only products in stock (public)
+GET {{gatewayUrl}}/api/v1/products?categoryId=3&inStockOnly=true&sort=PRICE_LOW_TO_HIGH
+
+
+### 5. Search "apple"
+GET {{gatewayUrl}}/api/v1/products?q=apple
+
+
+### 6. Add 4 x Amul Taaza Toned Milk (4 x 27.00)
+POST {{gatewayUrl}}/api/v1/cart/items
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "productId": 6,
+  "quantity": 4
+}
+
+
+### 7. Add 1 kg of Shimla apples (162.00)
+POST {{gatewayUrl}}/api/v1/cart/items
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "productId": 5,
+  "quantity": 1
+}
+
+
+### 8. Add 2 kg of tomatoes (2 x 36.00) -> items total 342.00, free delivery
+POST {{gatewayUrl}}/api/v1/cart/items
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "productId": 1,
+  "quantity": 2
+}
+
+
+### 9. Offers at Fresh Mart (public)
+GET {{gatewayUrl}}/api/v1/coupons?storeId=1
+
+
+### 10. Apply WELCOME50 (first order, 299 or more) -> payable 292.00
+PUT {{gatewayUrl}}/api/v1/cart/coupon
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "code": "WELCOME50"
+}
+
+
+### 11. Checkout page: today's prices, ready
+GET {{gatewayUrl}}/api/v1/cart/checkout
+Authorization: Bearer {{customerToken}}
+
+
+### 12. Place the order, cash on delivery -> 201 PENDING
+# @name order
+POST {{gatewayUrl}}/api/v1/orders
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "addressId": {{addressId}},
+  "paymentMethod": "COD",
+  "note": "Leave it with the security guard if I am out"
+}
+
+
+### 13. (wait) Stock reserved + COD accepted -> CONFIRMED
+# @wait 4
+GET {{gatewayUrl}}/api/v1/orders/{{orderId}}
+Authorization: Bearer {{customerToken}}
+
+
+### 14. vendor1 (Fresh Mart) logs in
+# @name vendorLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "vendor1@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 15. The vendor got a "New order" notification
+GET {{gatewayUrl}}/api/v1/notifications?unreadOnly=true
+Authorization: Bearer {{vendorToken}}
+
+
+### 16. The vendor accepts the order
+POST {{gatewayUrl}}/api/v1/vendor/orders/{{orderId}}/accept
+Authorization: Bearer {{vendorToken}}
+
+
+### 17. ...packs it
+POST {{gatewayUrl}}/api/v1/vendor/orders/{{orderId}}/pack
+Authorization: Bearer {{vendorToken}}
+
+
+### 18. ...and hands it over
+POST {{gatewayUrl}}/api/v1/vendor/orders/{{orderId}}/ready-for-pickup
+Authorization: Bearer {{vendorToken}}
+
+
+### 19. delivery1 (Arjun Singh, user 5, zone Indiranagar) logs in
+# @name partnerLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "delivery1@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 20. (wait) delivery1 goes online -> delivery-service assigns the waiting delivery to them (DeliveryAssigned)
+# @wait 3
+POST {{gatewayUrl}}/api/v1/delivery/availability/online
+Authorization: Bearer {{partnerToken}}
+
+
+### 21. delivery1's current delivery: ASSIGNED, pickup at Fresh Mart, drop at the customer's address
+# @name partnerDelivery
+GET {{gatewayUrl}}/api/v1/delivery/deliveries?active=true
+Authorization: Bearer {{partnerToken}}
+
+
+### 22. delivery1 accepts it
+POST {{gatewayUrl}}/api/v1/delivery/deliveries/{{deliveryId}}/accept
+Authorization: Bearer {{partnerToken}}
+
+
+### 23. ...collects it at the store (DeliveryPickedUp -> order OUT_FOR_DELIVERY)
+POST {{gatewayUrl}}/api/v1/delivery/deliveries/{{deliveryId}}/pick-up
+Authorization: Bearer {{partnerToken}}
+
+
+### 24. (wait) The order is OUT_FOR_DELIVERY and shows deliveryPartnerName "Arjun Singh"
+# @wait 3
+GET {{gatewayUrl}}/api/v1/orders/{{orderId}}
+Authorization: Bearer {{customerToken}}
+
+
+### 25. ...starts the trip
+POST {{gatewayUrl}}/api/v1/delivery/deliveries/{{deliveryId}}/start
+Authorization: Bearer {{partnerToken}}
+
+
+### 26. ...and delivers it (DeliveryCompleted -> order DELIVERED, paymentStatus PAID: the cash was collected)
+POST {{gatewayUrl}}/api/v1/delivery/deliveries/{{deliveryId}}/deliver
+Authorization: Bearer {{partnerToken}}
+
+
+### 27. (wait) The customer's tracking timeline: PENDING -> CONFIRMED -> ACCEPTED -> PACKED -> READY_FOR_PICKUP -> OUT_FOR_DELIVERY -> DELIVERED
+# @wait 3
+GET {{gatewayUrl}}/api/v1/orders/{{orderId}}
+Authorization: Bearer {{customerToken}}
+
+
+### 28. The customer's notifications: welcome, confirmed, accepted, packed, partner assigned, on the way, delivered
+GET {{gatewayUrl}}/api/v1/notifications
+Authorization: Bearer {{customerToken}}
+
+
+### 29. The same messages arrived by email (Mailpit API; also visible at http://localhost:8025)
+GET http://localhost:8025/api/v1/search?query=to:{{customerEmail}}
+
+
+### 30. WELCOME50 is used now: applying it to a new cart says so
+POST {{gatewayUrl}}/api/v1/cart/items
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "productId": 5,
+  "quantity": 2
+}
+
+
+### 31. -> 400 "You have already used coupon WELCOME50"
+PUT {{gatewayUrl}}/api/v1/cart/coupon
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "code": "WELCOME50"
+}
+
+
+### 32. CLEAN UP: empty the cart
+DELETE {{gatewayUrl}}/api/v1/cart
+Authorization: Bearer {{customerToken}}

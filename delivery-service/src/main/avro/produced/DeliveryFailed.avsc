@@ -1,0 +1,53 @@
+{
+  "type": "record",
+  "name": "DeliveryFailed",
+  "namespace": "com.grocery.events.delivery",
+  "doc": "The partner could not deliver (customer unavailable, wrong address, items damaged ...). order-service: DELIVERY_FAILED, which starts the compensation (stock back, payment refunded or cancelled). Producer: delivery-service. Topic: grocery.delivery.events, key = orderId.",
+  "fields": [
+    {
+      "name": "eventId",
+      "type": "string",
+      "doc": "Unique id of this event (UUID). Consumers use it to skip duplicates."
+    },
+    {
+      "name": "occurredAt",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      }
+    },
+    {
+      "name": "deliveryId",
+      "type": "long"
+    },
+    {
+      "name": "orderId",
+      "type": "long"
+    },
+    {
+      "name": "customerUserId",
+      "type": "long"
+    },
+    {
+      "name": "storeId",
+      "type": "long"
+    },
+    {
+      "name": "partnerUserId",
+      "type": "long"
+    },
+    {
+      "name": "issue",
+      "type": "string",
+      "doc": "CUSTOMER_UNAVAILABLE, ADDRESS_WRONG, ITEM_DAMAGED or OTHER"
+    },
+    {
+      "name": "note",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    }
+  ]
+}

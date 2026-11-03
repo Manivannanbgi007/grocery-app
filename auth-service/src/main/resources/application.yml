@@ -1,0 +1,177 @@
+# =====================================================================
+# auth-service configuration
+#
+# Every environment-specific value uses ${ENV_VARIABLE:local-default}.
+# Locally the defaults just work; Kubernetes overrides them with
+# environment variables (ConfigMaps / Secrets) - no code change needed.
+# =====================================================================
+
+server:
+  port: ${SERVER_PORT:8101}
+  shutdown: graceful
+  tomcat:
+    mbeanregistry:
+      enabled: true   # Tomcat's thread metrics (tomcat_threads_busy_threads ...) for Grafana and alerts
+
+spring:
+  application:
+    name: auth-service
+  profiles:
+    default: local        # used when no profile is set, e.g. when you press Run in the IDE
+
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3307/auth_db?allowPublicKeyRetrieval=true&useSSL=false}
+    username: ${DB_USERNAME:auth_user}
+    password: ${DB_PASSWORD:auth_pass}
+    # Connection pool (HikariCP). MySQL allows 300 connections for all services together: the budget is in
+    # docs/resilience.md ("Database connections").
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:10}   # at most 10 connections per instance
+      minimum-idle: ${DB_POOL_MIN_IDLE:2}         # only 2 stay open while the service is idle
+      connection-timeout: 5000                    # ms a request waits for a free connection, then fails (503), instead of hanging
+      idle-timeout: 300000                        # ms: connections above minimum-idle are closed after 5 unused minutes
+      max-lifetime: 1800000                       # ms: each connection is renewed after 30 min (MySQL drops idle ones after 8 h)
+      leak-detection-threshold: 20000             # ms: WARN with the stack trace when one connection is held longer
+      data-source-properties:
+        connectTimeout: 5000                      # ms to open the connection to MySQL
+        socketTimeout: 60000                      # ms one query may take before the driver gives up: no endless wait on a dead connection
+
+  # Every transaction must finish within 30 s: a query still running then is cancelled (KILL QUERY) and the
+  # transaction rolls back, so a stuck query cannot hold a database connection for ever.
+  transaction:
+    default-timeout: 30s
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate  # Flyway owns the schema; Hibernate only checks that entities match it
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
+  flyway:
+    locations: classpath:db/migration
+
+  data:
+    web:
+      pageable:
+        max-page-size: 100
+
+  # Kafka: this service CONSUMES store events. It PUBLISHES through the outbox table + Debezium,
+  # so it never sends to Kafka directly (it only needs Schema Registry to encode its events).
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    properties:
+      schema.registry.url: ${SCHEMA_REGISTRY_URL:http://localhost:8081}
+    listener:
+      observation-enabled: true      # a span per event, continuing the trace from the "traceparent" header
+    consumer:
+      group-id: ${spring.application.name}
+      auto-offset-reset: earliest      # a new consumer group starts from the oldest event
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      properties:
+        spring.deserializer.value.delegate.class: com.grocery.auth.messaging.consumer.KnownEventsAvroDeserializer
+        specific.avro.reader: true     # give us the generated classes (StoreApproved ...), not generic records
+
+management:
+  tracing:
+    sampling:
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}     # share of requests that are traced (lower it in production)
+    export:
+      otlp:
+        enabled: ${TRACING_EXPORT_ENABLED:false}            # true when Jaeger runs (start-infra.ps1 -Profiles monitoring)
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: ${OTLP_TRACING_ENDPOINT:http://localhost:4318/v1/traces}   # Jaeger's OTLP receiver (HTTP)
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true   # response-time buckets: p95/p99 in Grafana and alerts, sample requests link to traces
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true     # /actuator/health/liveness and /actuator/health/readiness (Kubernetes probes)
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  pattern:
+    correlation: "[%X{correlationId:-}] [%X{traceId:-}] "   # correlation id (CorrelationIdFilter) and trace id in every log line
+
+app:
+  # Logging (logback-spring.xml, docs/observability.md)
+  logging:
+    format: ${LOG_FORMAT:text}   # console: text (people) or json (ECS, one object per line, for a log collector)
+    # LoggingAspect (logging/LoggingAspect.java): calls that take longer are logged as WARN "SLOW"
+    slow-call-threshold: ${LOG_SLOW_CALL_THRESHOLD:1s}
+    loki:
+      enabled: ${LOKI_ENABLED:false}                             # true = also push every log line to Grafana Loki
+      url: ${LOKI_URL:http://localhost:3100/loki/api/v1/push}    # Loki's push API (start-infra.ps1 -Profiles monitoring)
+      environment: ${LOKI_ENVIRONMENT:local}                     # the "env" label in Loki: local, test, prod ...
+  # HousekeepingJob: deletes old rows of the event tables (docs/resilience.md, "Event tables")
+  housekeeping:
+    cron: "${HOUSEKEEPING_CRON:0 15 * * * *}"                                 # every hour at minute 15
+    outbox-retention: ${HOUSEKEEPING_OUTBOX_RETENTION:14d}                    # twice the binlog's 7 days
+    processed-event-retention: ${HOUSEKEEPING_PROCESSED_EVENT_RETENTION:30d}  # longer than an old event can come back
+    session-retention: ${HOUSEKEEPING_SESSION_RETENTION:1d}                  # login sessions, after they expired or were ended
+    reset-token-retention: ${HOUSEKEEPING_RESET_TOKEN_RETENTION:1d}          # password-reset tokens, after they expired
+    social-login-retention: ${HOUSEKEEPING_SOCIAL_LOGIN_RETENTION:1d}       # social login attempts, after their last step expired
+  jwt:
+    # Shared with the API gateway. Local default only - set JWT_SECRET in every other environment.
+    secret: ${JWT_SECRET:local-dev-only-jwt-secret-change-me-0123456789}
+    access-token-lifetime: ${JWT_ACCESS_TOKEN_LIFETIME:15m}   # short: an access token cannot be withdrawn
+    issuer: grocery-auth-service
+  # Login sessions = refresh tokens (docs/authentication.md)
+  session:
+    refresh-token-lifetime: ${REFRESH_TOKEN_LIFETIME:7d}   # renewed on every refresh: an active user stays logged in
+    max-lifetime: ${SESSION_MAX_LIFETIME:30d}              # log in again after this, however active
+    reuse-grace: 10s                                       # two tabs refreshing at the same moment are not "reuse"
+    cookie-secure: ${REFRESH_COOKIE_SECURE:true}           # the refresh cookie only over HTTPS (and http://localhost)
+  password-reset:
+    token-validity-minutes: 30
+    expose-token-in-response: false
+    # AES-256 key (32 bytes, Base64) for the token in the PasswordResetRequested event; notification-service has the same.
+    # Local default only ("local-dev-only-change-me-0123456") - set PASSWORD_RESET_EVENT_KEY in every other environment,
+    # e.g. from: openssl rand -base64 32
+    event-key: ${PASSWORD_RESET_EVENT_KEY:bG9jYWwtZGV2LW9ubHktY2hhbmdlLW1lLTAxMjM0NTY=}
+  # Social login: Google, Microsoft, Facebook, Apple (docs/social-login.md). Off unless SOCIAL_LOGIN_ENABLED=true; then
+  # every provider with a client id is offered (a button on the login pages), unless its own <PROVIDER>_LOGIN_ENABLED=false.
+  social:
+    enabled: ${SOCIAL_LOGIN_ENABLED:false}
+    # The address users open the shop with: providers send the browser back to <public-url>/api/v1/auth/login/oauth2/code/<provider>
+    # (register exactly that in the provider's console), and the login ends on <public-url>/login/social
+    public-url: ${APP_PUBLIC_URL:http://localhost:5173}
+    flow-lifetime: 10m        # time on the provider's login page
+    code-lifetime: 60s        # the one-time code the shop page exchanges right after
+    signup-lifetime: 15m      # the sign-up form, or the password to connect an existing account
+    providers:
+      google:
+        enabled: ${GOOGLE_LOGIN_ENABLED:true}
+        client-id: ${GOOGLE_CLIENT_ID:}
+        client-secret: ${GOOGLE_CLIENT_SECRET:}
+      microsoft:
+        enabled: ${MICROSOFT_LOGIN_ENABLED:true}
+        client-id: ${MICROSOFT_CLIENT_ID:}
+        client-secret: ${MICROSOFT_CLIENT_SECRET:}
+        tenant: ${MICROSOFT_TENANT:common}      # common, organizations, consumers, or one Directory (tenant) ID
+      facebook:
+        enabled: ${FACEBOOK_LOGIN_ENABLED:true}
+        client-id: ${FACEBOOK_CLIENT_ID:}       # the App ID
+        client-secret: ${FACEBOOK_CLIENT_SECRET:}
+        graph-version: ${FACEBOOK_GRAPH_VERSION:v23.0}
+      apple:
+        enabled: ${APPLE_LOGIN_ENABLED:true}
+        client-id: ${APPLE_CLIENT_ID:}          # the Services ID; no client secret: it is signed with the key below
+        team-id: ${APPLE_TEAM_ID:}
+        key-id: ${APPLE_KEY_ID:}
+        private-key: ${APPLE_PRIVATE_KEY:}      # the content of the .p8 file
+        pkce: ${APPLE_PKCE:true}                # false if Apple ever refuses PKCE

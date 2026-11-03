@@ -1,0 +1,8 @@
+# =====================================================================
+# Local development profile (active by default - see spring.profiles.default)
+# This service has no seed data of its own: it copies product_db through Debezium.
+# =====================================================================
+
+logging:
+  level:
+    com.grocery: DEBUG

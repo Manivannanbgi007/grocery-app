@@ -1,0 +1,58 @@
+# The cluster's entry point (Gateway API, the successor of Ingress; the old ingress-nginx controller was retired in
+# March 2026). NGINX Gateway Fabric (addons/nginx-gateway-fabric) sees this Gateway and starts NGINX pods for it,
+# reachable on node port 30080 = http://localhost:8281 (cluster A) or http://localhost:8282 (cluster B).
+# Which path goes where: routes.yaml.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: grocery
+  namespace: grocery
+  labels:
+    app.kubernetes.io/part-of: grocery
+spec:
+  gatewayClassName: nginx            # created by the NGINX Gateway Fabric install
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: Same                 # only routes of the namespace "grocery"
+---
+# Uploads: product photos and proof-of-delivery photos up to 6 MB (NGINX's default is 1 MB).
+apiVersion: gateway.nginx.org/v1alpha1
+kind: ClientSettingsPolicy
+metadata:
+  name: grocery-client-settings
+  namespace: grocery
+  labels:
+    app.kubernetes.io/part-of: grocery
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: grocery
+  body:
+    maxSize: 6m
+---
+# Timeouts to the services. NGINX waits 60 s by default; the API gateway's longest route timeout is 180 s (the AI
+# assistant), and it answers every other slow request itself with 504 after 10 s. So the API gateway, not NGINX,
+# decides about timeouts. The live streams (vendor order queue, delivery tracking) stay open for minutes: the read
+# timeout counts the time BETWEEN two pieces of data, and they send a keep-alive every 15 s. Their responses carry
+# "X-Accel-Buffering: no", so NGINX passes every update on at once (docs/delivery-tracking.md).
+apiVersion: gateway.nginx.org/v1alpha1
+kind: ProxySettingsPolicy
+metadata:
+  name: grocery-proxy-settings
+  namespace: grocery
+  labels:
+    app.kubernetes.io/part-of: grocery
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: grocery
+  timeout:
+    connect: 5s
+    read: 180s
+    send: 180s

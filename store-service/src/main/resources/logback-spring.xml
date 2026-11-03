@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Logging configuration of this service (the same file in every service; docs/observability.md explains it).
+
+  1. Console, in one of two formats (app.logging.format, environment variable LOG_FORMAT):
+       text (default)  Spring Boot's normal output, for people (with the correlation id and the trace id, see
+                       logging.pattern.correlation in application.yml)
+       json            one JSON object per line in the Elastic Common Schema (ECS) format, for a log collector
+                       (Kubernetes: Grafana Alloy, Fluent Bit ...). The MDC values (correlationId, traceId, spanId)
+                       and the key-value pairs (kind, method, outcome, durationMs) become JSON fields.
+     Log levels still come from application.yml (logging.level.*).
+
+  2. Grafana Loki: only when app.logging.loki.enabled=true (environment variable LOKI_ENABLED=true).
+     Then every log line is ALSO pushed to Loki over HTTP by the loki4j appender: in batches, from a background
+     thread, so logging never waits for Loki. When Loki is slow or down the service keeps working: a batch is
+     retried a few times, then dropped, and at most 10 MB wait in memory.
+
+  What Loki receives for every line:
+    labels (few different values; Loki keeps one stream per combination)  app=cart-service  env=local  level=INFO
+    structured metadata (fields to filter on, one value per line)        logger, thread, every MDC value
+                                                                          (correlationId, traceId, spanId) and every
+                                                                          key-value pair (kind, method, outcome,
+                                                                          durationMs from LoggingAspect)
+    the line itself                                                       "logger - message" + the stack trace
+-->
+<configuration>
+
+    <!-- Spring Boot's default patterns and settings (CONSOLE_LOG_PATTERN ...) -->
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <!-- Values from application.yml. scope="context" so that the <condition>s below can read them. -->
+    <springProperty scope="context" name="APP_NAME" source="spring.application.name"/>
+    <springProperty scope="context" name="LOG_FORMAT" source="app.logging.format" defaultValue="text"/>
+    <springProperty scope="context" name="LOKI_ENABLED" source="app.logging.loki.enabled" defaultValue="false"/>
+    <springProperty scope="context" name="LOKI_URL" source="app.logging.loki.url"
+                    defaultValue="http://localhost:3100/loki/api/v1/push"/>
+    <springProperty scope="context" name="LOKI_ENVIRONMENT" source="app.logging.loki.environment" defaultValue="local"/>
+
+    <!-- Logback's own property condition (no extra library needed). The <condition> must come right BEFORE the
+         <if>: the <if> uses the result of the condition in front of it. -->
+    <condition class="ch.qos.logback.core.boolex.PropertyEqualityCondition">
+        <key>LOG_FORMAT</key>
+        <value>json</value>
+    </condition>
+    <if>
+        <then>
+            <!-- Spring Boot's structured logging: one ECS JSON object per line -->
+            <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+                <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+                    <level>${CONSOLE_LOG_THRESHOLD}</level>
+                </filter>
+                <encoder class="org.springframework.boot.logging.logback.StructuredLogEncoder">
+                    <format>ecs</format>
+                    <charset>UTF-8</charset>
+                </encoder>
+            </appender>
+        </then>
+        <else>
+            <!-- Spring Boot's normal console output (the same as its console-appender.xml) -->
+            <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+                <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+                    <level>${CONSOLE_LOG_THRESHOLD}</level>
+                </filter>
+                <encoder>
+                    <pattern>${CONSOLE_LOG_PATTERN}</pattern>
+                    <charset>${CONSOLE_LOG_CHARSET}</charset>
+                </encoder>
+            </appender>
+        </else>
+    </if>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+
+    <condition class="ch.qos.logback.core.boolex.PropertyEqualityCondition">
+        <key>LOKI_ENABLED</key>
+        <value>true</value>
+    </condition>
+    <if>
+        <then>
+            <appender name="LOKI" class="com.github.loki4j.logback.Loki4jAppender">
+                <http>
+                    <url>${LOKI_URL}</url>
+                    <connectionTimeoutMs>5000</connectionTimeoutMs>
+                    <requestTimeoutMs>5000</requestTimeoutMs>
+                </http>
+                <batch>
+                    <!-- Send every 2 seconds, or as soon as 1000 lines are waiting -->
+                    <maxItems>1000</maxItems>
+                    <timeoutMs>2000</timeoutMs>
+                    <!-- At most 10 MB of lines wait to be sent: while Loki is down, newer lines are dropped
+                         instead of filling the memory of the service (the metric loki4j_drop_events_total counts them) -->
+                    <sendQueueMaxBytes>10485760</sendQueueMaxBytes>
+                </batch>
+                <labels>
+                    app = ${APP_NAME}
+                    env = ${LOKI_ENVIRONMENT}
+                    level = %level
+                </labels>
+                <structuredMetadata>
+                    logger = %logger
+                    thread = %thread
+                    * = %%mdc
+                    * = %%kvp
+                </structuredMetadata>
+                <message>
+                    <pattern>%logger{40} - %msg%n%ex</pattern>
+                </message>
+                <!-- loki4j's own metrics (lines sent, dropped, failed requests) in /actuator/prometheus -->
+                <metricsEnabled>true</metricsEnabled>
+            </appender>
+
+            <root level="INFO">
+                <appender-ref ref="LOKI"/>
+            </root>
+        </then>
+    </if>
+
+</configuration>

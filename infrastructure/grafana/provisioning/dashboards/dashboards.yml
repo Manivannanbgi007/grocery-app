@@ -1,0 +1,12 @@
+# Grafana loads every dashboard JSON file of this folder (folder "Grocery") on startup, and checks the folder for
+# changed files every 30 s.
+apiVersion: 1
+
+providers:
+  - name: grocery
+    folder: Grocery
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/dashboards

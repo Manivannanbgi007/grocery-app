@@ -1,0 +1,14 @@
+{
+  "type": "record",
+  "name": "LowStockDetected",
+  "namespace": "com.grocery.events.inventory",
+  "doc": "A product's available stock just dropped to its low-stock threshold (published once per drop, not on every change). Producer: inventory-service. Topic: grocery.inventory.events, key = productId. notification-service (Phase 8) alerts the vendor.",
+  "fields": [
+    { "name": "eventId",           "type": "string", "doc": "Unique id of this event (UUID). Consumers use it to skip duplicates." },
+    { "name": "occurredAt",        "type": { "type": "long", "logicalType": "timestamp-millis" } },
+    { "name": "productId",         "type": "long" },
+    { "name": "storeId",           "type": "long" },
+    { "name": "availableQuantity", "type": "int" },
+    { "name": "lowStockThreshold", "type": "int" }
+  ]
+}

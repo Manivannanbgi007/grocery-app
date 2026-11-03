@@ -1,0 +1,54 @@
+# Grafana loads this on startup: Loki (logs) and Jaeger (traces), linked both ways
+# (Prometheus and Alertmanager: prometheus-and-alertmanager.yml):
+#   log line with a traceId  -> "Open trace in Jaeger"      (Explore -> Loki -> open a line)
+#   span of a trace          -> "Related logs"               (all log lines of the trace, from every service)
+#                            -> "Requests per second" / "Response time (p95)" of the span's service (Prometheus)
+# "$$" because Grafana would read "${...}" in this file as an environment variable.
+apiVersion: 1
+
+deleteDatasources:
+  - name: Zipkin                       # replaced by Jaeger
+    orgId: 1
+
+datasources:
+  - name: Loki
+    type: loki
+    uid: loki                          # the dashboards refer to this uid
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      maxLines: 1000
+      derivedFields:
+        - name: traceId
+          matcherType: label           # traceId is structured metadata of the line (from the MDC), not part of the text
+          matcherRegex: traceId
+          datasourceUid: jaeger
+          url: "$${__value.raw}"
+          urlDisplayLabel: Open trace in Jaeger
+
+  - name: Jaeger
+    type: jaeger
+    uid: jaeger
+    access: proxy
+    url: http://jaeger:16686
+    jsonData:
+      nodeGraph:
+        enabled: true                  # a graph of which service called which
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: "-5m"
+        spanEndTimeShift: "5m"
+        customQuery: true
+        query: '{app=~".+"} | traceId="$${__trace.traceId}"'
+      tracesToMetrics:
+        datasourceUid: prometheus
+        spanStartTimeShift: "-15m"
+        spanEndTimeShift: "15m"
+        tags:
+          - key: service.name          # the span's service ...
+            value: service             # ... is the "service" label in Prometheus
+        queries:
+          - name: Requests per second
+            query: 'sum(rate(http_server_requests_seconds_count{$$__tags, uri!~"/actuator.*"}[1m]))'
+          - name: Response time (p95)
+            query: 'histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{$$__tags, uri!~"/actuator.*"}[5m])))'

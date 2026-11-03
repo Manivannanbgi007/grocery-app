@@ -1,0 +1,12 @@
+# =====================================================================
+# Local development profile (active by default - see spring.profiles.default)
+# =====================================================================
+
+spring:
+  flyway:
+    # Also load the sample customers from db/seed. Local only - never in other environments.
+    locations: classpath:db/migration, classpath:db/seed
+
+logging:
+  level:
+    com.grocery: DEBUG

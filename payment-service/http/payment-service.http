@@ -1,0 +1,166 @@
+### =====================================================================
+### payment-service - ready-to-run requests
+###
+### Works with the VS Code "REST Client" extension and the IntelliJ HTTP Client.
+### Calls the service DIRECTLY on port 8109, so we send the X-User-* headers ourselves.
+###
+### There is no seed data: a payment is created when order-service publishes OrderCreated.
+### First place an ONLINE order for customer1 (user 4), for example with request 19 of
+### e2e/phase7-order-saga.http or this order-service request:
+###   POST http://localhost:8108/api/v1/orders  {"addressId": 1, "paymentMethod": "ONLINE"}
+### and put its id below.
+### =====================================================================
+
+@baseUrl = http://localhost:8109
+@orderId = 1
+
+
+### 1. CUSTOMER (user 4): the payment of my order -> AWAITING_PAYMENT, canPayNow true, payBefore = deadline (15 min)
+GET {{baseUrl}}/api/v1/payments/orders/{{orderId}}
+X-User-Id: 4
+X-User-Role: CUSTOMER
+
+
+### 2. CUSTOMER (user 7): someone else's payment -> 404
+GET {{baseUrl}}/api/v1/payments/orders/{{orderId}}
+X-User-Id: 7
+X-User-Role: CUSTOMER
+
+
+### 3. CUSTOMER (user 4): invalid mock payment request -> 400 ("success" is required)
+POST {{baseUrl}}/api/v1/payments/orders/{{orderId}}/mock-pay
+Content-Type: application/json
+X-User-Id: 4
+X-User-Role: CUSTOMER
+
+{}
+
+
+### 4. CUSTOMER (user 4): pay with the mock gateway -> PAID, publishes PaymentConfirmed (the order becomes CONFIRMED)
+POST {{baseUrl}}/api/v1/payments/orders/{{orderId}}/mock-pay
+Content-Type: application/json
+X-User-Id: 4
+X-User-Role: CUSTOMER
+
+{
+  "success": true
+}
+
+
+### 5. CUSTOMER (user 4): pay again -> 400 (status PAID)
+POST {{baseUrl}}/api/v1/payments/orders/{{orderId}}/mock-pay
+Content-Type: application/json
+X-User-Id: 4
+X-User-Role: CUSTOMER
+
+{
+  "success": true
+}
+
+
+### 6. ADMIN: all payments, newest first
+GET {{baseUrl}}/api/v1/admin/payments
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 7. ADMIN: online payments that were paid
+GET {{baseUrl}}/api/v1/admin/payments?method=ONLINE&status=PAID
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 8. ADMIN: refunds (after cancelling a paid order)
+GET {{baseUrl}}/api/v1/admin/payments?status=REFUNDED
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 9. ADMIN: payments of Fresh Mart (store 1)
+GET {{baseUrl}}/api/v1/admin/payments?storeId=1
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 10. ADMIN: one payment by its own id
+GET {{baseUrl}}/api/v1/admin/payments/1
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 11. ADMIN: unknown payment -> 404
+GET {{baseUrl}}/api/v1/admin/payments/999999
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 12. INTERNAL: the payment of an order (other services)
+GET {{baseUrl}}/internal/payments/orders/{{orderId}}
+
+
+### 13. ADMIN: money in and out this month - online paid, cash collected, refunded (India time)
+GET {{baseUrl}}/api/v1/admin/payments/summary?from=2026-10-01&to=2026-10-31
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 14. ADMIN: summary with the dates the wrong way round -> 400
+GET {{baseUrl}}/api/v1/admin/payments/summary?from=2026-10-31&to=2026-10-01
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 15. ADMIN: online payments that failed (declined, or "Not paid in time" after the deadline)
+GET {{baseUrl}}/api/v1/admin/payments?status=FAILED
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### =====================================================================
+### RAZORPAY MODE ONLY - start the service with your Razorpay TEST keys:
+###   PAYMENT_GATEWAY=razorpay RAZORPAY_KEY_ID=rzp_test_... RAZORPAY_KEY_SECRET=... RAZORPAY_WEBHOOK_SECRET=...
+### (in mock mode these paths return 404). Place a new ONLINE order and put its id in @orderId.
+### =====================================================================
+
+### 16. CUSTOMER (user 4): what the frontend passes to Razorpay Checkout (keyId, razorpayOrderId, amountInPaise)
+GET {{baseUrl}}/api/v1/payments/orders/{{orderId}}/razorpay-checkout
+X-User-Id: 4
+X-User-Role: CUSTOMER
+
+
+### 17. CUSTOMER (user 4): after paying in Checkout, send its three values -> PAID
+#     Pay in Razorpay's test Checkout page (card 4111 1111 1111 1111), then paste what its handler received.
+POST {{baseUrl}}/api/v1/payments/orders/{{orderId}}/razorpay-verify
+Content-Type: application/json
+X-User-Id: 4
+X-User-Role: CUSTOMER
+
+{
+  "razorpayOrderId": "order_PASTE_FROM_REQUEST_16",
+  "razorpayPaymentId": "pay_PASTE_FROM_CHECKOUT",
+  "razorpaySignature": "PASTE_FROM_CHECKOUT"
+}
+
+
+### 18. CUSTOMER (user 4): a forged signature -> 400 "The payment could not be verified"
+POST {{baseUrl}}/api/v1/payments/orders/{{orderId}}/razorpay-verify
+Content-Type: application/json
+X-User-Id: 4
+X-User-Role: CUSTOMER
+
+{
+  "razorpayOrderId": "order_PASTE_FROM_REQUEST_16",
+  "razorpayPaymentId": "pay_forged",
+  "razorpaySignature": "0000000000000000000000000000000000000000000000000000000000000000"
+}
+
+
+### 19. RAZORPAY: a webhook with a wrong signature -> 400 (real webhooks come from Razorpay itself;
+#     to receive them locally, expose port 8080 with a tunnel such as ngrok and register
+#     https://<tunnel>/api/v1/payments/webhooks/razorpay in the Razorpay dashboard)
+POST {{baseUrl}}/api/v1/payments/webhooks/razorpay
+Content-Type: application/json
+X-Razorpay-Signature: not-a-real-signature
+X-Razorpay-Event-Id: evt_local_test
+
+{"entity":"event","event":"payment.captured","payload":{"payment":{"entity":{"id":"pay_x","order_id":"order_x","status":"captured"}}}}

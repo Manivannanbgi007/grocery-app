@@ -1,0 +1,255 @@
+### =====================================================================
+### platform-service - ready-to-run requests
+###
+### Works with the VS Code "REST Client" extension and the IntelliJ HTTP Client.
+### Calls the service DIRECTLY on port 8113, so we send the X-User-Id / X-User-Role headers
+### ourselves (normally the API gateway adds them from the JWT).
+###
+### Seed: one settings row (INR, delivery 30.00, free from 299.00, minimum 99.00), four feature flags,
+### three banners (the third one has ended). The full flow through the gateway: e2e/phase11-reports-and-platform.http
+### =====================================================================
+
+@baseUrl = http://localhost:8113
+@bannerId = {{newBanner.response.body.$.data.id}}
+
+
+### 1. PUBLIC: currency, delivery fee, free delivery amount, minimum order, support contact
+GET {{baseUrl}}/api/v1/platform/settings
+
+
+### 2. PUBLIC: feature switches for the apps
+GET {{baseUrl}}/api/v1/platform/feature-flags
+
+
+### 3. PUBLIC: home page banners shown right now (ended or inactive ones are left out)
+GET {{baseUrl}}/api/v1/banners
+
+
+### 4. SUPER_ADMIN (user 1): change the settings -> PlatformSettingsChanged (cart-service uses them a moment later)
+PUT {{baseUrl}}/api/v1/super-admin/settings
+Content-Type: application/json
+X-User-Id: 1
+X-User-Role: SUPER_ADMIN
+
+{
+  "currency": "INR",
+  "deliveryFee": 35.00,
+  "freeDeliveryFrom": 349.00,
+  "minimumOrderValue": 99.00,
+  "supportEmail": "support@grocery.com",
+  "supportPhone": "1800-123-4567"
+}
+
+
+### 5. SUPER_ADMIN: minimum order above the free delivery amount -> 400
+PUT {{baseUrl}}/api/v1/super-admin/settings
+Content-Type: application/json
+X-User-Id: 1
+X-User-Role: SUPER_ADMIN
+
+{
+  "currency": "INR",
+  "deliveryFee": 35.00,
+  "freeDeliveryFrom": 99.00,
+  "minimumOrderValue": 149.00,
+  "supportEmail": "support@grocery.com",
+  "supportPhone": "1800-123-4567"
+}
+
+
+### 6. SUPER_ADMIN: invalid values -> 400 with one error per field
+PUT {{baseUrl}}/api/v1/super-admin/settings
+Content-Type: application/json
+X-User-Id: 1
+X-User-Role: SUPER_ADMIN
+
+{
+  "currency": "rupees",
+  "deliveryFee": -5,
+  "freeDeliveryFrom": 299.00,
+  "minimumOrderValue": 99.00,
+  "supportEmail": "not-an-email",
+  "supportPhone": ""
+}
+
+
+### 7. SUPER_ADMIN: put the settings back
+PUT {{baseUrl}}/api/v1/super-admin/settings
+Content-Type: application/json
+X-User-Id: 1
+X-User-Role: SUPER_ADMIN
+
+{
+  "currency": "INR",
+  "deliveryFee": 30.00,
+  "freeDeliveryFrom": 299.00,
+  "minimumOrderValue": 99.00,
+  "supportEmail": "support@grocery.com",
+  "supportPhone": "1800-123-4567"
+}
+
+
+### 8. SUPER_ADMIN: all feature flags
+GET {{baseUrl}}/api/v1/super-admin/feature-flags
+X-User-Id: 1
+X-User-Role: SUPER_ADMIN
+
+
+### 9. SUPER_ADMIN: a new flag for a new city (off until the launch)
+POST {{baseUrl}}/api/v1/super-admin/feature-flags
+Content-Type: application/json
+X-User-Id: 1
+X-User-Role: SUPER_ADMIN
+
+{
+  "key": "CITY_PUNE_{{$randomInt 100 999}}",
+  "description": "Stores and customers in Pune can use the app",
+  "enabled": false
+}
+
+
+### 10. SUPER_ADMIN: switch delivery slots on
+PATCH {{baseUrl}}/api/v1/super-admin/feature-flags/DELIVERY_SLOTS
+Content-Type: application/json
+X-User-Id: 1
+X-User-Role: SUPER_ADMIN
+
+{
+  "enabled": true
+}
+
+
+### 11. SUPER_ADMIN: ...and off again
+PATCH {{baseUrl}}/api/v1/super-admin/feature-flags/DELIVERY_SLOTS
+Content-Type: application/json
+X-User-Id: 1
+X-User-Role: SUPER_ADMIN
+
+{
+  "enabled": false
+}
+
+
+### 12. SUPER_ADMIN: unknown flag -> 404
+PATCH {{baseUrl}}/api/v1/super-admin/feature-flags/NO_SUCH_FLAG
+Content-Type: application/json
+X-User-Id: 1
+X-User-Role: SUPER_ADMIN
+
+{
+  "enabled": true
+}
+
+
+### 13. ADMIN (user 2): all banners, with "live" = shown right now
+GET {{baseUrl}}/api/v1/admin/banners
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 14. ADMIN: a banner for one week of November
+# @name newBanner
+POST {{baseUrl}}/api/v1/admin/banners
+Content-Type: application/json
+X-User-Id: 2
+X-User-Role: ADMIN
+
+{
+  "title": "Organic week",
+  "subtitle": "15 % off organic vegetables",
+  "imageUrl": "http://localhost:8080/media/banners/organic.jpg",
+  "linkUrl": "/categories/1",
+  "position": 4,
+  "startsAt": "2026-11-09T00:00:00Z",
+  "endsAt": "2026-11-16T00:00:00Z",
+  "active": true
+}
+
+
+### 15. ADMIN: end before start -> 400
+PUT {{baseUrl}}/api/v1/admin/banners/{{bannerId}}
+Content-Type: application/json
+X-User-Id: 2
+X-User-Role: ADMIN
+
+{
+  "title": "Organic week",
+  "imageUrl": "http://localhost:8080/media/banners/organic.jpg",
+  "position": 4,
+  "startsAt": "2026-11-16T00:00:00Z",
+  "endsAt": "2026-11-09T00:00:00Z",
+  "active": true
+}
+
+
+### 16. ADMIN: remove it
+DELETE {{baseUrl}}/api/v1/admin/banners/{{bannerId}}
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 17. SUPER_ADMIN: the audit log of changes made here (settings, flags, banners)
+GET {{baseUrl}}/api/v1/super-admin/audit-log?source=platform-service
+X-User-Id: 1
+X-User-Role: SUPER_ADMIN
+
+
+### 18. SUPER_ADMIN: every OrderCancelled event of the platform
+GET {{baseUrl}}/api/v1/super-admin/audit-log?eventType=OrderCancelled
+X-User-Id: 1
+X-User-Role: SUPER_ADMIN
+
+
+### 19. SUPER_ADMIN: everything about order 1 (the Kafka key is the order id)
+GET {{baseUrl}}/api/v1/super-admin/audit-log?aggregateId=1&sort=occurredAt,asc
+X-User-Id: 1
+X-User-Role: SUPER_ADMIN
+
+
+### 20. SUPER_ADMIN: everything of store 1 since 1 Oct 2026
+GET {{baseUrl}}/api/v1/super-admin/audit-log?storeId=1&from=2026-10-01T00:00:00Z
+X-User-Id: 1
+X-User-Role: SUPER_ADMIN
+
+
+### ---------- Dead letters: events that failed after all retries (docs/resilience.md, "Dead letters") ----------
+
+### 21. SUPER_ADMIN: every dead-letter topic and how many messages it keeps (30 days)
+GET {{baseUrl}}/api/v1/super-admin/dead-letters
+X-User-Id: 1
+X-User-Role: SUPER_ADMIN
+
+
+### 22. SUPER_ADMIN: the newest failed order events: the event, the error, partition + offset, replayed or not
+GET {{baseUrl}}/api/v1/super-admin/dead-letters/grocery.order.events.DLT?limit=20
+X-User-Id: 1
+X-User-Role: SUPER_ADMIN
+
+
+### 23. SUPER_ADMIN: after fixing the cause, send ONE message back to grocery.order.events (partition + offset from 22)
+POST {{baseUrl}}/api/v1/super-admin/dead-letters/grocery.order.events.DLT/replay
+Content-Type: application/json
+X-User-Id: 1
+X-User-Role: SUPER_ADMIN
+
+{
+  "partition": 0,
+  "offset": 0
+}
+
+
+### 24. SUPER_ADMIN: send back EVERY message of the topic that was not replayed yet (at most 500 per call)
+POST {{baseUrl}}/api/v1/super-admin/dead-letters/grocery.order.events.DLT/replay
+Content-Type: application/json
+X-User-Id: 1
+X-User-Role: SUPER_ADMIN
+
+{
+  "all": true
+}
+
+
+### 25. SUPER_ADMIN: every replay so far (who and when)
+GET {{baseUrl}}/api/v1/super-admin/audit-log?eventType=DeadLetterReplayed
+X-User-Id: 1
+X-User-Role: SUPER_ADMIN

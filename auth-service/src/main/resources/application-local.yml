@@ -1,0 +1,32 @@
+# =====================================================================
+# Local development profile (active by default - see spring.profiles.default)
+# =====================================================================
+
+spring:
+  flyway:
+    # Also load the sample users from db/seed. Local only - never in other environments.
+    locations: classpath:db/migration, classpath:db/seed
+
+app:
+  password-reset:
+    # DEV ONLY: return the reset token in the API response, so the flow can be
+    # tested without an email server. Never enable this outside local development.
+    expose-token-in-response: true
+  session:
+    # DEV ONLY: the refresh cookie without "Secure". Browsers accept Secure cookies on http://localhost, but curl
+    # (older than 7.79), PowerShell and the VS Code REST Client would not send it back over http. Production: true.
+    cookie-secure: ${REFRESH_COOKIE_SECURE:false}
+  social:
+    providers:
+      # DEV ONLY: a fake OpenID provider for trying social login without real credentials (docs/social-login.md).
+      # Start it with scripts\start-infra.ps1 -Profiles tools, then set SOCIAL_LOGIN_ENABLED=true and
+      # SOCIAL_TEST_CLIENT_ID=grocery-local before starting this service: a "Test provider" button appears.
+      # Refused outside the local and test profiles.
+      test:
+        client-id: ${SOCIAL_TEST_CLIENT_ID:}
+        client-secret: local-only
+        issuer-uri: ${SOCIAL_TEST_PROVIDER_URL:http://127.0.0.1:8099/test}
+
+logging:
+  level:
+    com.grocery: DEBUG

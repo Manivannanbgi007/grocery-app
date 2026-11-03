@@ -1,0 +1,114 @@
+### =====================================================================
+### mcp-client-service: the AI shopping assistant
+###
+### Through the API gateway (as the website will call it). Guests may chat; with a customer's token the conversation
+### belongs to that customer. Answers take a few seconds (the model runs on the CPU).
+### Needs: Ollama (start-infra.ps1 -Profiles ai), mcp-server-service, mcp-client-service, the gateway and the
+### catalog services. Run the requests in VS Code (REST Client extension) or IntelliJ IDEA.
+### =====================================================================
+
+@gateway = http://localhost:8080
+@service = http://localhost:8114
+
+### 1. A guest asks a question: start a new conversation (no conversationId).
+###    -> data.answer, data.conversationId, data.grounded = true, data.toolsUsed = ["searchProducts"]
+# @name firstQuestion
+POST {{gateway}}/api/v1/chat/messages
+Content-Type: application/json
+
+{"message": "Do you have Amul butter? How much is it?"}
+
+### 2. A follow-up in the same conversation ("it" = Amul butter, from the conversation)
+POST {{gateway}}/api/v1/chat/messages
+Content-Type: application/json
+
+{"conversationId": "{{firstQuestion.response.body.data.conversationId}}", "message": "Is it in stock?"}
+
+### 3. The messages of the conversation (oldest first)
+GET {{gateway}}/api/v1/chat/conversations/{{firstQuestion.response.body.data.conversationId}}
+
+### 4. Something the shop does not sell -> it searches first, then "could not find"
+POST {{gateway}}/api/v1/chat/messages
+Content-Type: application/json
+
+{"message": "Do you sell the iPhone 15?"}
+
+### 5. Delivery rules, offers, stores
+POST {{gateway}}/api/v1/chat/messages
+Content-Type: application/json
+
+{"message": "When is delivery free, and which coupons can I use?"}
+
+### 6. Not about the shop -> polite refusal, no tool, grounded = false
+POST {{gateway}}/api/v1/chat/messages
+Content-Type: application/json
+
+{"message": "Who won the cricket world cup in 2011?"}
+
+### 7. Validation: an empty message -> 400 "Please type a message"
+POST {{gateway}}/api/v1/chat/messages
+Content-Type: application/json
+
+{"message": "   "}
+
+### 8. A conversation id that does not exist (or belongs to someone else) -> 404
+POST {{gateway}}/api/v1/chat/messages
+Content-Type: application/json
+
+{"conversationId": "00000000-0000-0000-0000-000000000000", "message": "Hi"}
+
+### 9. Log in as customer1 (seed data) ...
+# @name login
+POST {{gateway}}/api/v1/auth/login
+Content-Type: application/json
+
+{"email": "customer1@grocery.com", "password": "Password@123"}
+
+### 10. ... and chat as that customer: the conversation belongs to user 4 only
+POST {{gateway}}/api/v1/chat/messages
+Authorization: Bearer {{login.response.body.data.accessToken}}
+Content-Type: application/json
+
+{"message": "Where is the Fresh Mart store?"}
+
+### 11. Delete the first conversation ("New chat" in the widget)
+DELETE {{gateway}}/api/v1/chat/conversations/{{firstQuestion.response.body.data.conversationId}}
+
+### 12. Directly at the service (without the gateway, no chat rate limit): send the user header yourself
+POST {{service}}/api/v1/chat/messages
+X-User-Id: 4
+Content-Type: application/json
+
+{"message": "What is the minimum order value?"}
+
+### 13. Health (used by Kubernetes)
+GET {{service}}/actuator/health
+
+### ---------- Voice (speaches: start-infra.ps1 -Profiles ai; docs/ai-assistant-plan.md "Voice") ----------
+### A spoken question takes three calls: the recording -> its words (14), the words -> the answer (1), the answer -> speech (15).
+### question.webm (next to this file) says "Which offers are running this week?", recorded the way Chrome and Edge do.
+
+### 14. A recording becomes text -> data.text "Which offers are running this week."
+POST {{gateway}}/api/v1/chat/transcriptions
+Content-Type: multipart/form-data; boundary=voice
+
+--voice
+Content-Disposition: form-data; name="audio"; filename="question.webm"
+Content-Type: audio/webm
+
+< ./question.webm
+--voice--
+
+### 15. An answer is read aloud -> audio/mpeg (the "Accept" lets errors still come back as JSON)
+POST {{gateway}}/api/v1/chat/speech
+Content-Type: application/json
+Accept: audio/mpeg, application/json
+
+{"text": "Fresh Mart has Amul Butter at ₹58.00 for 100 g. Orders above ₹299 are delivered free."}
+
+### 16. Nothing to read aloud -> 400 (JSON, also when audio was asked for)
+POST {{gateway}}/api/v1/chat/speech
+Content-Type: application/json
+Accept: audio/mpeg, application/json
+
+{"text": " "}

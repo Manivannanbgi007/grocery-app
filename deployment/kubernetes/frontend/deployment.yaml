@@ -1,0 +1,69 @@
+# fresh-grocery (the React shop): the running pods. Each pod is an NGINX that serves the built files
+# (fresh-grocery/Dockerfile, fresh-grocery/nginx/default.conf). service.yaml gives them the name http://frontend.
+# How many: hpa.yaml (3 to 5, by CPU). pdb.yaml keeps at least 2 running while a node is emptied.
+# The shop calls the API through the relative path /api: the Gateway (gateway/routes.yaml) sends that to api-gateway.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: grocery
+  labels:
+    app: frontend
+    app.kubernetes.io/part-of: grocery
+spec:
+  # no "replicas" here: hpa.yaml decides (3 to 5)
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1                        # a new version first starts one extra pod ...
+      maxUnavailable: 0                  # ... and an old pod stops only when a new one is ready: no downtime
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+        app.kubernetes.io/part-of: grocery
+    spec:
+      automountServiceAccountToken: false  # NGINX never calls the Kubernetes API, so it gets no token
+      terminationGracePeriodSeconds: 20
+      topologySpreadConstraints:         # spread the replicas over the worker nodes: one node down != all replicas down
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: frontend
+      containers:
+        - name: frontend
+          image: grocery/fresh-grocery:0.0.1
+          imagePullPolicy: IfNotPresent      # images are built locally and loaded into the cluster
+          ports:
+            - name: http
+              containerPort: 80
+          resources:
+            requests:
+              cpu: 50m                       # the autoscaler's 70 % target counts against this
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 64Mi                   # NGINX serving files needs a few MB
+          readinessProbe:                    # answers "/" -> may get traffic
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:                     # stuck? -> restart the container
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 5                # a slow answer (busy node) is not "stuck": restart only after 3 x 20 s
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5                   # on "stop", keep serving 5 s while the Service and the Gateway drop this pod

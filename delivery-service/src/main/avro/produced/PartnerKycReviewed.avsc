@@ -1,0 +1,42 @@
+{
+  "type": "record",
+  "name": "PartnerKycReviewed",
+  "namespace": "com.grocery.events.delivery",
+  "doc": "An admin approved or rejected a delivery partner's KYC. notification-service tells the partner; report-service counts approved partners. Producer: delivery-service. Topic: grocery.delivery.events, key = partnerUserId.",
+  "fields": [
+    {
+      "name": "eventId",
+      "type": "string",
+      "doc": "Unique id of this event (UUID). Consumers use it to skip duplicates."
+    },
+    {
+      "name": "occurredAt",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      }
+    },
+    {
+      "name": "partnerUserId",
+      "type": "long"
+    },
+    {
+      "name": "fullName",
+      "type": "string"
+    },
+    {
+      "name": "status",
+      "type": "string",
+      "doc": "APPROVED or REJECTED"
+    },
+    {
+      "name": "note",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null,
+      "doc": "Why it was rejected"
+    }
+  ]
+}

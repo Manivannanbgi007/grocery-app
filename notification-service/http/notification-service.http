@@ -1,0 +1,91 @@
+### =====================================================================
+### notification-service - ready-to-run requests
+###
+### Works with the VS Code "REST Client" extension and the IntelliJ HTTP Client.
+### Calls the service DIRECTLY on port 8111, so we send the X-User-* headers ourselves.
+###
+### Notifications come from events: run e2e/phase7-order-saga.http or e2e/mvp-order-flow.http first
+### (or any other flow) and the users below will have notifications.
+### Emails: http://localhost:8025 (Mailpit).
+### =====================================================================
+
+@baseUrl = http://localhost:8111
+
+
+### 1. CUSTOMER (user 4): my notifications, newest first
+GET {{baseUrl}}/api/v1/notifications
+X-User-Id: 4
+X-User-Role: CUSTOMER
+
+
+### 2. CUSTOMER (user 4): only the unread ones
+GET {{baseUrl}}/api/v1/notifications?unreadOnly=true&size=5
+X-User-Id: 4
+X-User-Role: CUSTOMER
+
+
+### 3. CUSTOMER (user 4): the badge number
+GET {{baseUrl}}/api/v1/notifications/unread-count
+X-User-Id: 4
+X-User-Role: CUSTOMER
+
+
+### 4. CUSTOMER (user 4): mark notification 1 as read (404 if it is not mine)
+PATCH {{baseUrl}}/api/v1/notifications/1/read
+X-User-Id: 4
+X-User-Role: CUSTOMER
+
+
+### 5. CUSTOMER (user 7): someone else's notification -> 404
+PATCH {{baseUrl}}/api/v1/notifications/1/read
+X-User-Id: 7
+X-User-Role: CUSTOMER
+
+
+### 6. VENDOR (user 3, Fresh Mart): new orders, cancellations, low stock
+GET {{baseUrl}}/api/v1/notifications
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+
+### 7. VENDOR (user 3): mark everything as read
+POST {{baseUrl}}/api/v1/notifications/read-all
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+
+### 8. VENDOR (user 3): badge is 0 now
+GET {{baseUrl}}/api/v1/notifications/unread-count
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+
+### 9. ADMIN: everything the platform sent, newest first
+GET {{baseUrl}}/api/v1/admin/notifications
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 10. ADMIN: emails that could not be sent
+GET {{baseUrl}}/api/v1/admin/notifications?emailStatus=FAILED
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 11. ADMIN: all "new order" messages to vendors
+GET {{baseUrl}}/api/v1/admin/notifications?type=NEW_ORDER
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 12. ADMIN: unknown type -> 400
+GET {{baseUrl}}/api/v1/admin/notifications?type=SMS
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 13. Without the gateway header -> 401
+GET {{baseUrl}}/api/v1/notifications

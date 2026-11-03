@@ -1,0 +1,28 @@
+{
+  "type": "record",
+  "name": "StockReleased",
+  "namespace": "com.grocery.events.inventory",
+  "doc": "The units held for a cancelled or rejected order are available again. Producer: inventory-service. Topic: grocery.inventory.events, key = orderId.",
+  "fields": [
+    {
+      "name": "eventId",
+      "type": "string",
+      "doc": "Unique id of this event (UUID). Consumers use it to skip duplicates."
+    },
+    {
+      "name": "occurredAt",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      }
+    },
+    {
+      "name": "orderId",
+      "type": "long"
+    },
+    {
+      "name": "storeId",
+      "type": "long"
+    }
+  ]
+}

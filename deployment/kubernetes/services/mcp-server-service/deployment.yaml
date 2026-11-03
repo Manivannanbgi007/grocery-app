@@ -1,0 +1,83 @@
+# mcp-server-service: the AI assistant's tools (MCP): the running pods (Deployment).
+# service.yaml: http://mcp-server-service. networkpolicy.yaml: only mcp-client-service pods may call it
+# (the API gateway does not route to it either).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-server-service
+  namespace: grocery
+  labels:
+    app: mcp-server-service
+    app.kubernetes.io/part-of: grocery
+spec:
+  replicas: 1                                # stateless MCP: more replicas need no sticky sessions
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1                        # a new version first starts one extra pod ...
+      maxUnavailable: 0                  # ... and an old pod stops only when a new one is ready: no downtime
+  selector:
+    matchLabels:
+      app: mcp-server-service
+  template:
+    metadata:
+      labels:
+        app: mcp-server-service
+        app.kubernetes.io/part-of: grocery
+      annotations:                       # a Prometheus in the cluster finds the metrics through these
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /actuator/prometheus
+        prometheus.io/port: "8080"
+    spec:
+      automountServiceAccountToken: false  # the app never calls the Kubernetes API, so it gets no token
+      terminationGracePeriodSeconds: 45    # preStop (10 s) + Spring Boot's graceful shutdown (up to 30 s)
+      containers:
+        - name: mcp-server-service
+          image: grocery/mcp-server-service:0.0.1
+          imagePullPolicy: IfNotPresent      # images are built locally and loaded into the cluster
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: grocery-config         # shared: profile, tracing ...
+          env:
+            - name: API_GATEWAY_URL          # every tool reads its data through the gateway, like the website
+              value: "http://api-gateway"
+            - name: MCP_API_KEY              # the shared secret; mcp-client-service sends the same value
+              valueFrom:
+                secretKeyRef:
+                  name: grocery-secrets
+                  key: MCP_API_KEY
+          resources:
+            requests:
+              cpu: 100m
+              memory: 384Mi
+            limits:
+              cpu: "1"                       # at most one CPU core
+              memory: 640Mi                  # the JVM uses 75 % of it as heap (-XX:MaxRAMPercentage=75 in the Dockerfile)
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3                # each check may take 3 s (the default 1 s is too short for a busy JVM)
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5                # a slow answer (GC pause, busy node) is not "stuck": restart only after 3 x 10 s
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 10                  # on "stop", keep serving 10 s while the Service and the Gateway drop this pod

@@ -1,0 +1,166 @@
+### =====================================================================
+### store-service - ready-to-run requests
+###
+### Works with the VS Code "REST Client" extension and the IntelliJ HTTP Client.
+### Calls the service DIRECTLY on port 8103, so we send the X-User-* headers
+### ourselves (normally the API gateway adds them from the JWT).
+###
+### Seed data (docs/seed-data.md):
+###   store 1 Fresh Mart   (owner user 3 = vendor1)   ACTIVE
+###   store 2 Green Basket (owner user 6 = vendor2)   ACTIVE
+###   user 10 = vendor3 has NO store yet -> use it to register one (request 4)
+###   user 2 = admin, user 1 = super admin
+### =====================================================================
+
+@baseUrl = http://localhost:8103
+
+
+### 1. PUBLIC: list active stores in Bengaluru (no headers needed)
+GET {{baseUrl}}/api/v1/stores?city=Bengaluru
+
+
+### 2. PUBLIC: which stores deliver to PIN code 560034?
+GET {{baseUrl}}/api/v1/stores?pincode=560034
+
+
+### 3. PUBLIC: one store, with opening hours and "openNow"
+GET {{baseUrl}}/api/v1/stores/1
+
+
+### 4. VENDOR (user 10): register my store -> PENDING_APPROVAL, publishes StoreRegistered
+#    (run once; a second run gives 409 "You already have a store")
+POST {{baseUrl}}/api/v1/vendor/store
+Content-Type: application/json
+X-User-Id: 10
+X-User-Role: VENDOR
+
+{
+  "name": "Daily Needs Supermarket",
+  "description": "Groceries, dairy and household items",
+  "phone": "9000000010",
+  "email": "dailyneeds@example.com",
+  "addressLine1": "22, 5th Cross, Malleshwaram",
+  "city": "Bengaluru",
+  "state": "Karnataka",
+  "pincode": "560003",
+  "latitude": 13.003100,
+  "longitude": 77.571400
+}
+
+
+### 5. VENDOR (user 10): my store
+GET {{baseUrl}}/api/v1/vendor/store
+X-User-Id: 10
+X-User-Role: VENDOR
+
+
+### 6. VENDOR (user 10): weekly opening hours ("closed" is optional; missing days are closed)
+PUT {{baseUrl}}/api/v1/vendor/store/opening-hours
+Content-Type: application/json
+X-User-Id: 10
+X-User-Role: VENDOR
+
+{
+  "days": [
+    { "dayOfWeek": "MONDAY",    "opensAt": "08:00", "closesAt": "21:00" },
+    { "dayOfWeek": "TUESDAY",   "opensAt": "08:00", "closesAt": "21:00" },
+    { "dayOfWeek": "WEDNESDAY", "opensAt": "08:00", "closesAt": "21:00" },
+    { "dayOfWeek": "THURSDAY",  "opensAt": "08:00", "closesAt": "21:00" },
+    { "dayOfWeek": "FRIDAY",    "opensAt": "08:00", "closesAt": "21:00" },
+    { "dayOfWeek": "SATURDAY",  "opensAt": "09:00", "closesAt": "22:00" },
+    { "dayOfWeek": "SUNDAY",    "closed": true }
+  ]
+}
+
+
+### 7. VENDOR (user 10): PIN codes my store delivers to
+PUT {{baseUrl}}/api/v1/vendor/store/delivery-areas
+Content-Type: application/json
+X-User-Id: 10
+X-User-Role: VENDOR
+
+{
+  "pincodes": ["560003", "560020", "560055"]
+}
+
+
+### 8. VENDOR: invalid store details -> 400 with one error per field
+POST {{baseUrl}}/api/v1/vendor/store
+Content-Type: application/json
+X-User-Id: 99
+X-User-Role: VENDOR
+
+{
+  "name": "",
+  "phone": "12345",
+  "addressLine1": "x",
+  "city": "Bengaluru",
+  "state": "Karnataka",
+  "pincode": "012345"
+}
+
+
+### 9. ADMIN: the approval queue
+GET {{baseUrl}}/api/v1/admin/stores?status=PENDING_APPROVAL
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 10. ADMIN: approve store 3 (the one from request 4) -> ACTIVE, publishes StoreApproved
+#     auth-service consumes it and vendor3's next login token contains storeId 3
+POST {{baseUrl}}/api/v1/admin/stores/3/approve
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 11. ADMIN: approving it again -> 400 (only PENDING_APPROVAL stores can be approved)
+POST {{baseUrl}}/api/v1/admin/stores/3/approve
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 12. VENDOR (user 3): pause new orders at Fresh Mart (send true to resume)
+PATCH {{baseUrl}}/api/v1/vendor/store/accepting-orders
+Content-Type: application/json
+X-User-Id: 3
+X-User-Role: VENDOR
+
+{
+  "acceptingOrders": false
+}
+
+
+### 13. ADMIN: disable Green Basket -> publishes StoreStatusChanged
+POST {{baseUrl}}/api/v1/admin/stores/2/disable
+Content-Type: application/json
+X-User-Id: 2
+X-User-Role: ADMIN
+
+{
+  "reason": "Temporarily closed for renovation"
+}
+
+
+### 14. ADMIN: enable Green Basket again
+POST {{baseUrl}}/api/v1/admin/stores/2/enable
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 15. SUPER_ADMIN: set Fresh Mart's commission to 12.5 %
+PATCH {{baseUrl}}/api/v1/super-admin/stores/1/commission
+Content-Type: application/json
+X-User-Id: 1
+X-User-Role: SUPER_ADMIN
+
+{
+  "commissionPercentage": 12.50
+}
+
+
+### 16. INTERNAL (service-to-service): any store in any status
+GET {{baseUrl}}/internal/stores/1
+
+
+### 17. Unknown store -> 404
+GET {{baseUrl}}/api/v1/stores/9999

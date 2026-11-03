@@ -1,0 +1,13 @@
+# =====================================================================
+# Local development profile (active by default - see spring.profiles.default)
+# =====================================================================
+
+app:
+  mcp:
+    # The same local key as in mcp-server-service's application-local.yml.
+    # Never use this value anywhere else: set MCP_API_KEY instead.
+    api-key: ${MCP_API_KEY:local-dev-mcp-api-key-0123456789abcdef}
+
+logging:
+  level:
+    com.grocery: DEBUG

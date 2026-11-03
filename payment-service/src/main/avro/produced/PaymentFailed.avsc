@@ -1,0 +1,36 @@
+{
+  "type": "record",
+  "name": "PaymentFailed",
+  "namespace": "com.grocery.events.payment",
+  "doc": "The online payment failed. order-service cancels the order (and inventory releases the stock). Producer: payment-service. Topic: grocery.payment.events, key = orderId.",
+  "fields": [
+    {
+      "name": "eventId",
+      "type": "string",
+      "doc": "Unique id of this event (UUID). Consumers use it to skip duplicates."
+    },
+    {
+      "name": "occurredAt",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      }
+    },
+    {
+      "name": "paymentId",
+      "type": "long"
+    },
+    {
+      "name": "orderId",
+      "type": "long"
+    },
+    {
+      "name": "customerUserId",
+      "type": "long"
+    },
+    {
+      "name": "reason",
+      "type": "string"
+    }
+  ]
+}

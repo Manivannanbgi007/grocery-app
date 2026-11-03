@@ -1,0 +1,201 @@
+# =====================================================================
+# mcp-client-service configuration (the AI shopping assistant)
+#
+# Every environment-specific value uses ${ENV_VARIABLE:local-default}.
+# Locally the defaults just work; Kubernetes overrides them with
+# environment variables (ConfigMaps / Secrets) - no code change needed.
+# =====================================================================
+
+server:
+  port: ${SERVER_PORT:8114}
+  shutdown: graceful
+  tomcat:
+    mbeanregistry:
+      enabled: true   # Tomcat's thread metrics (tomcat_threads_busy_threads ...) for Grafana and alerts
+
+spring:
+  application:
+    name: mcp-client-service
+  profiles:
+    default: local        # used when no profile is set, e.g. when you press Run in the IDE
+
+  # ----- conversations (chat_db) -----
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3307/chat_db?allowPublicKeyRetrieval=true&useSSL=false}
+    username: ${DB_USERNAME:chat_user}
+    password: ${DB_PASSWORD:chat_pass}
+    # Connection pool (HikariCP). MySQL allows 300 connections for all services together: the budget is in
+    # docs/resilience.md ("Database connections").
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:5}   # at most 5 connections per instance
+      minimum-idle: ${DB_POOL_MIN_IDLE:2}         # only 2 stay open while the service is idle
+      connection-timeout: 5000                    # ms a request waits for a free connection, then fails (503), instead of hanging
+      idle-timeout: 300000                        # ms: connections above minimum-idle are closed after 5 unused minutes
+      max-lifetime: 1800000                       # ms: each connection is renewed after 30 min (MySQL drops idle ones after 8 h)
+      leak-detection-threshold: 20000             # ms: WARN with the stack trace when one connection is held longer
+      data-source-properties:
+        connectTimeout: 5000                      # ms to open the connection to MySQL
+        socketTimeout: 60000                      # ms one query may take before the driver gives up: no endless wait on a dead connection
+
+  # Every transaction must finish within 30 s: a query still running then is cancelled (KILL QUERY) and the
+  # transaction rolls back, so a stuck query cannot hold a database connection for ever.
+  transaction:
+    default-timeout: 30s
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate  # Flyway owns the schema; Hibernate only checks that entities match it
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
+  flyway:
+    locations: classpath:db/migration
+
+  # Timeouts of the HTTP client that calls Ollama. One model call (question -> tool call, or tool result -> answer)
+  # takes 2-15 s with the default model on a CPU, up to ~45 s with qwen3:8b (see docs/ai-assistant-plan.md).
+  http:
+    clients:
+      connect-timeout: 2s
+      read-timeout: 120s
+
+  # Spoken questions (POST /api/v1/chat/transcriptions): the browser records at most 30 s, about 120 KB in webm/opus.
+  servlet:
+    multipart:
+      max-file-size: 2MB
+      max-request-size: 3MB
+
+  ai:
+    model:
+      embedding: none     # only the chat model is used (no embeddings / RAG)
+
+    # ----- the language model -----
+    ollama:
+      base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+      init:
+        pull-model-strategy: never   # the model is downloaded by Docker Compose (ollama-pull), not at start-up
+      chat:
+        model: ${OLLAMA_CHAT_MODEL:qwen3:4b-instruct-2507-q4_K_M}
+        temperature: 0.1   # low = the same question gets the same, factual answer (no creativity needed)
+        num-ctx: 8192      # context window: system prompt + tool list + history + tool results fit easily
+        num-predict: 400   # answer length limit in tokens (the prompt asks for at most 4 sentences)
+        # How long Ollama keeps the model in memory after a question. A cold start (load + first prompt) took 90 s
+        # on a CPU, so the model stays loaded for a day; ModelWarmUp loads it when this service starts.
+        keep-alive: ${OLLAMA_KEEP_ALIVE:24h}
+        think: false       # no hidden "reasoning" text: faster, and nothing of it can leak into answers
+
+    # Spring AI's own retry would repeat a failed model call up to 10 times with growing pauses (minutes).
+    # A customer is waiting, so a failed call is answered with 503 at once.
+    retry:
+      max-attempts: 1
+
+    # Limits of the tool loop for one question: a small model can get stuck calling the same tool again and again.
+    # When a limit is hit, the model is told so and must answer with what it has.
+    tools:
+      limits:
+        max-calls-per-tool-default: 3
+        max-total-tool-calls: 6
+        on-limit-exceeded: return-error-response
+
+    # The conversation memory table is created by Flyway (db/migration), like every other table.
+    chat:
+      memory:
+        repository:
+          jdbc:
+            initialize-schema: never
+
+    # ----- the MCP connection to mcp-server-service -----
+    mcp:
+      client:
+        name: grocery-assistant
+        version: 1.0.0
+        type: SYNC
+        initialized: false     # connect on first use: this service also starts while mcp-server-service is down
+        request-timeout: 30s   # one tool call (mcp-server-service gives each gateway call 5 s)
+        toolcallback:
+          enabled: false       # GroceryToolsClient creates the tool callbacks itself (to record the results)
+        annotation-scanner:
+          enabled: false       # no client-side MCP handlers (sampling, elicitation): our tools never ask back
+        streamable-http:
+          connections:
+            grocery-tools:
+              url: ${MCP_SERVER_URL:http://localhost:8115}
+              endpoint: /mcp
+
+management:
+  tracing:
+    sampling:
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}     # share of requests that are traced (lower it in production)
+    export:
+      otlp:
+        enabled: ${TRACING_EXPORT_ENABLED:false}            # true when Jaeger runs (start-infra.ps1 -Profiles monitoring)
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: ${OTLP_TRACING_ENDPOINT:http://localhost:4318/v1/traces}   # Jaeger's OTLP receiver (HTTP)
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true   # response-time buckets: p95/p99 in Grafana and alerts, sample requests link to traces
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true     # /actuator/health/liveness and /actuator/health/readiness (Kubernetes probes)
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  pattern:
+    correlation: "[%X{correlationId:-}] [%X{traceId:-}] "   # correlation id (CorrelationIdFilter) and trace id in every log line
+
+app:
+  # Logging (logback-spring.xml, docs/observability.md)
+  logging:
+    format: ${LOG_FORMAT:text}   # console: text (people) or json (ECS, one object per line, for a log collector)
+    # LoggingAspect (logging/LoggingAspect.java): calls that take longer are logged as WARN "SLOW".
+    # 60 s here (1 s in the other services): one answer of the model normally takes 5-40 s on a CPU.
+    slow-call-threshold: ${LOG_SLOW_CALL_THRESHOLD:60s}
+    loki:
+      enabled: ${LOKI_ENABLED:false}                             # true = also push every log line to Grafana Loki
+      url: ${LOKI_URL:http://localhost:3100/loki/api/v1/push}    # Loki's push API (start-infra.ps1 -Profiles monitoring)
+      environment: ${LOKI_ENVIRONMENT:local}                     # the "env" label in Loki: local, test, prod ...
+  chat:
+    system-prompt: classpath:prompts/system-prompt.txt               # guests and customers
+    panel-system-prompt: classpath:prompts/panel-system-prompt.txt   # vendors, delivery partners and admins
+    history-messages: 10           # the model sees the last 5 questions and answers
+    max-concurrent-chats: ${CHAT_MAX_CONCURRENT:4}
+    busy-wait: 5s
+    # A second attempt only after a first one quicker than this. On this CPU a first attempt with tools takes 20-45 s
+    # (30 s turned away most retries); 60 s + a second attempt still ends well before the gateway's 180 s.
+    retry-only-within: 60s
+    conversation-retention: 30d
+    cleanup-cron: "0 30 3 * * *"    # every night at 03:30
+    time-zone: Asia/Kolkata
+    warm-up: ${CHAT_WARM_UP:true}   # ask one question at start-up, so the first customer does not wait for the model to load
+  # Voice: the local speech server speaches (docker-compose profile "ai", docs/ai-assistant-plan.md "Voice").
+  # Measured on the development PC (12 CPUs): a spoken question becomes text in about 1.5 s, an answer of 300
+  # characters becomes speech in about 6 s.
+  voice:
+    base-url: ${SPEECH_BASE_URL:http://localhost:8000}
+    transcription-model: ${SPEECH_TRANSCRIPTION_MODEL:Systran/faster-distil-whisper-small.en}   # English only
+    speech-model: ${SPEECH_VOICE_MODEL:speaches-ai/Kokoro-82M-v1.0-ONNX}
+    voice: ${SPEECH_VOICE:af_heart}         # GET http://localhost:8000/v1/audio/voices lists the others
+    language: en
+    speed: 1.0
+    max-concurrent: ${VOICE_MAX_CONCURRENT:2}
+    busy-wait: 3s
+    connect-timeout: 2s
+    read-timeout: 45s                       # under the gateway's 60 s for the voice routes
+  mcp:
+    # The shared secret for mcp-server-service. Empty when the variable is missing, so the start fails with a
+    # clear message (outside the local profile, see application-local.yml).
+    api-key: ${MCP_API_KEY:}
+    connect-timeout: 2s

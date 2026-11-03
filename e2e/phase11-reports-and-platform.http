@@ -1,0 +1,418 @@
+### =====================================================================
+### END-TO-END (Phase 11): platform settings, reviews and ratings, invoices, reports - through the gateway (8080)
+###
+###   A. The super admin changes the delivery fee and minimum order -> cart-service uses them (PlatformSettingsChanged);
+###      banners and feature flags; the audit log
+###   B. An order is delivered -> PDF invoice, product review (rating shows in search), delivery rating
+###   C. The admin dashboard, sales reports, top lists and the super admin's commission report
+###   D. Put the settings back (other e2e files expect delivery fee 30.00 and minimum order 99.00)
+###
+### Needs: every service (Phases 1-11) + the connectors (scripts\register-connectors.ps1).
+### Written for the VS Code "REST Client" extension. Run the requests IN ORDER.
+### =====================================================================
+
+@gatewayUrl = http://localhost:8080
+@today = {{$datetime "YYYY-MM-DD"}}
+
+@customerToken = {{customerLogin.response.body.$.data.accessToken}}
+@vendorToken = {{vendorLogin.response.body.$.data.accessToken}}
+@adminToken = {{adminLogin.response.body.$.data.accessToken}}
+@superAdminToken = {{superAdminLogin.response.body.$.data.accessToken}}
+@partnerToken = {{partnerLogin.response.body.$.data.accessToken}}
+@orderId = {{order.response.body.$.data.id}}
+@deliveryId = {{partnerDelivery.response.body.$.data.content[0].id}}
+@reviewId = {{review.response.body.$.data.id}}
+
+
+### 1. customer1 (user 4) logs in
+# @name customerLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "customer1@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 2. vendor1 (Fresh Mart) logs in
+# @name vendorLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "vendor1@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 3. The admin logs in
+# @name adminLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 4. The super admin logs in
+# @name superAdminLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "superadmin@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 5. delivery1 logs in
+# @name partnerLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "delivery1@grocery.com",
+  "password": "Password@123"
+}
+
+
+### ===== A. Platform settings, banners, feature flags =====
+
+### 6. Public settings (no login): INR, delivery fee 30.00, free from 299.00, minimum order 99.00
+GET {{gatewayUrl}}/api/v1/platform/settings
+
+
+### 7. Public feature flags (no login)
+GET {{gatewayUrl}}/api/v1/platform/feature-flags
+
+
+### 8. Home page banners (no login): the expired Diwali banner is not shown
+GET {{gatewayUrl}}/api/v1/banners
+
+
+### 9. An admin cannot change platform settings -> 403
+PUT {{gatewayUrl}}/api/v1/super-admin/settings
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "currency": "INR",
+  "deliveryFee": 25.00,
+  "freeDeliveryFrom": 249.00,
+  "minimumOrderValue": 79.00,
+  "supportEmail": "support@grocery.com",
+  "supportPhone": "1800-123-4567"
+}
+
+
+### 10. The super admin lowers the delivery fee and the minimum order (PlatformSettingsChanged)
+PUT {{gatewayUrl}}/api/v1/super-admin/settings
+Authorization: Bearer {{superAdminToken}}
+Content-Type: application/json
+
+{
+  "currency": "INR",
+  "deliveryFee": 25.00,
+  "freeDeliveryFrom": 249.00,
+  "minimumOrderValue": 79.00,
+  "supportEmail": "support@grocery.com",
+  "supportPhone": "1800-123-4567"
+}
+
+
+### 11. customer1 starts with an empty cart
+DELETE {{gatewayUrl}}/api/v1/cart
+Authorization: Bearer {{customerToken}}
+
+
+### 12. (wait) ...adds 2 kg of tomatoes (72.00): cart-service already uses the new rules -> delivery 25.00, minimum 79.00
+# @wait 3
+POST {{gatewayUrl}}/api/v1/cart/items
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "productId": 1,
+  "quantity": 2
+}
+
+
+### 13. ...and 1 Amul Taaza Toned Milk (27.00) -> 99.00, above the new minimum
+POST {{gatewayUrl}}/api/v1/cart/items
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "productId": 6,
+  "quantity": 1
+}
+
+
+### 14. The admin adds a banner
+POST {{gatewayUrl}}/api/v1/admin/banners
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "title": "Weekend fruit festival",
+  "subtitle": "Up to 20 % off fruits",
+  "imageUrl": "http://localhost:8080/media/banners/fruits.jpg",
+  "linkUrl": "/categories/2",
+  "position": 3,
+  "active": true
+}
+
+
+### 15. The home page now shows it too
+GET {{gatewayUrl}}/api/v1/banners
+
+
+### 16. The super admin switches on delivery slots
+PATCH {{gatewayUrl}}/api/v1/super-admin/feature-flags/DELIVERY_SLOTS
+Authorization: Bearer {{superAdminToken}}
+Content-Type: application/json
+
+{
+  "enabled": true
+}
+
+
+### 17. Audit log: who changed what (settings, flags and banners are recorded here)
+GET {{gatewayUrl}}/api/v1/super-admin/audit-log?source=platform-service&size=5
+Authorization: Bearer {{superAdminToken}}
+
+
+### 18. Audit log: everything that happened to customer1 (events of every service)
+GET {{gatewayUrl}}/api/v1/super-admin/audit-log?userId=4&size=5
+Authorization: Bearer {{superAdminToken}}
+
+
+### ===== B. Deliver an order -> invoice, review, delivery rating =====
+
+### 19. customer1 orders COD (99.00 + 25.00 delivery)
+# @name order
+POST {{gatewayUrl}}/api/v1/orders
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "addressId": 1,
+  "paymentMethod": "COD"
+}
+
+
+### 20. No invoice before the store accepts -> 400
+# @wait 4
+GET {{gatewayUrl}}/api/v1/orders/{{orderId}}/invoice
+Authorization: Bearer {{customerToken}}
+
+
+### 21. vendor1 accepts it
+POST {{gatewayUrl}}/api/v1/vendor/orders/{{orderId}}/accept
+Authorization: Bearer {{vendorToken}}
+
+
+### 22. ...prints the invoice to put in the bag (PDF)
+GET {{gatewayUrl}}/api/v1/vendor/orders/{{orderId}}/invoice
+Authorization: Bearer {{vendorToken}}
+
+
+### 23. ...packs it
+POST {{gatewayUrl}}/api/v1/vendor/orders/{{orderId}}/pack
+Authorization: Bearer {{vendorToken}}
+
+
+### 24. ...and hands it over
+POST {{gatewayUrl}}/api/v1/vendor/orders/{{orderId}}/ready-for-pickup
+Authorization: Bearer {{vendorToken}}
+
+
+### 25. (wait) delivery1 goes online -> gets the delivery
+# @wait 3
+POST {{gatewayUrl}}/api/v1/delivery/availability/online
+Authorization: Bearer {{partnerToken}}
+
+
+### 26. delivery1's current delivery
+# @name partnerDelivery
+GET {{gatewayUrl}}/api/v1/delivery/deliveries?active=true
+Authorization: Bearer {{partnerToken}}
+
+
+### 27. accept
+POST {{gatewayUrl}}/api/v1/delivery/deliveries/{{deliveryId}}/accept
+Authorization: Bearer {{partnerToken}}
+
+
+### 28. pick up
+POST {{gatewayUrl}}/api/v1/delivery/deliveries/{{deliveryId}}/pick-up
+Authorization: Bearer {{partnerToken}}
+
+
+### 29. start
+POST {{gatewayUrl}}/api/v1/delivery/deliveries/{{deliveryId}}/start
+Authorization: Bearer {{partnerToken}}
+
+
+### 30. deliver
+POST {{gatewayUrl}}/api/v1/delivery/deliveries/{{deliveryId}}/deliver
+Authorization: Bearer {{partnerToken}}
+
+
+### 31. (wait) The customer downloads the tax invoice (PDF)
+# @wait 4
+GET {{gatewayUrl}}/api/v1/orders/{{orderId}}/invoice
+Authorization: Bearer {{customerToken}}
+
+
+### 32. customer1 reviews the tomatoes of this order: 4 stars
+# @name review
+POST {{gatewayUrl}}/api/v1/products/1/reviews
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "orderId": {{orderId}},
+  "rating": 4,
+  "comment": "Fresh and firm, one was a bit soft"
+}
+
+
+### 33. The same product of the same order again -> 409
+POST {{gatewayUrl}}/api/v1/products/1/reviews
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "orderId": {{orderId}},
+  "rating": 5
+}
+
+
+### 34. A product that was not in the order -> 400
+POST {{gatewayUrl}}/api/v1/products/9/reviews
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "orderId": {{orderId}},
+  "rating": 5
+}
+
+
+### 35. Everybody can read the reviews of a product (no login)
+GET {{gatewayUrl}}/api/v1/products/1/reviews
+
+
+### 36. (wait) Search shows the new average rating (product-service -> Debezium -> Elasticsearch)
+# @wait 3
+GET {{gatewayUrl}}/api/v1/products/1
+
+
+### 37. Best rated products first
+GET {{gatewayUrl}}/api/v1/products?sort=RATING&size=3
+
+
+### 38. customer1 rates the delivery: 5 stars
+POST {{gatewayUrl}}/api/v1/delivery-ratings
+Authorization: Bearer {{customerToken}}
+Content-Type: application/json
+
+{
+  "orderId": {{orderId}},
+  "rating": 5,
+  "comment": "Very polite, on time"
+}
+
+
+### 39. delivery1 sees the rating in the profile
+GET {{gatewayUrl}}/api/v1/delivery/profile
+Authorization: Bearer {{partnerToken}}
+
+
+### 40. vendor1 reads the reviews of the store's products
+GET {{gatewayUrl}}/api/v1/vendor/reviews
+Authorization: Bearer {{vendorToken}}
+
+
+### 41. The admin hides a review (it no longer counts for the rating)
+PATCH {{gatewayUrl}}/api/v1/admin/reviews/{{reviewId}}/hide
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "reason": "Test review"
+}
+
+
+### ===== C. Reports (built by report-service from the events) =====
+
+### 42. (wait) Admin dashboard
+# @wait 2
+GET {{gatewayUrl}}/api/v1/admin/reports/dashboard
+Authorization: Bearer {{adminToken}}
+
+
+### 43. Sales per day (today)
+GET {{gatewayUrl}}/api/v1/admin/reports/sales/daily?from={{today}}&to={{today}}
+Authorization: Bearer {{adminToken}}
+
+
+### 44. Best-selling products this period
+GET {{gatewayUrl}}/api/v1/admin/reports/top-products?from={{today}}&to={{today}}&limit=5
+Authorization: Bearer {{adminToken}}
+
+
+### 45. Stores with the highest sales
+GET {{gatewayUrl}}/api/v1/admin/reports/top-stores?from={{today}}&to={{today}}
+Authorization: Bearer {{adminToken}}
+
+
+### 46. vendor1: the daily sales of Fresh Mart
+GET {{gatewayUrl}}/api/v1/vendor/reports/sales/daily?from={{today}}&to={{today}}
+Authorization: Bearer {{vendorToken}}
+
+
+### 47. The super admin: platform commission per store (orders delivered today)
+GET {{gatewayUrl}}/api/v1/super-admin/reports/commissions?from={{today}}&to={{today}}
+Authorization: Bearer {{superAdminToken}}
+
+
+### 48. A vendor cannot see the admin dashboard -> 403
+GET {{gatewayUrl}}/api/v1/admin/reports/dashboard
+Authorization: Bearer {{vendorToken}}
+
+
+### ===== D. Clean up =====
+
+### 49. Put the settings back (delivery fee 30.00, free from 299.00, minimum 99.00)
+PUT {{gatewayUrl}}/api/v1/super-admin/settings
+Authorization: Bearer {{superAdminToken}}
+Content-Type: application/json
+
+{
+  "currency": "INR",
+  "deliveryFee": 30.00,
+  "freeDeliveryFrom": 299.00,
+  "minimumOrderValue": 99.00,
+  "supportEmail": "support@grocery.com",
+  "supportPhone": "1800-123-4567"
+}
+
+
+### 50. Switch delivery slots off again
+PATCH {{gatewayUrl}}/api/v1/super-admin/feature-flags/DELIVERY_SLOTS
+Authorization: Bearer {{superAdminToken}}
+Content-Type: application/json
+
+{
+  "enabled": false
+}
+
+
+### 51. delivery1 goes offline
+POST {{gatewayUrl}}/api/v1/delivery/availability/offline
+Authorization: Bearer {{partnerToken}}

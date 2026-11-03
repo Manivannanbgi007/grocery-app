@@ -1,0 +1,44 @@
+# Which request goes where. The longest matching path wins, so "/api/..." goes to the API gateway even though
+# the frontend route matches "/" (everything).
+#
+#   /api, /media, /delivery-media, Swagger  -> api-gateway   (it checks the token and routes to the 15 services)
+#   everything else                         -> frontend      (the React shop; its pages are /shop, /vendor, /admin ...)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: api
+  namespace: grocery
+  labels:
+    app.kubernetes.io/part-of: grocery
+spec:
+  parentRefs:
+    - name: grocery                  # gateway.yaml
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: /api }
+        - path: { type: PathPrefix, value: /media }               # product photos
+        - path: { type: PathPrefix, value: /delivery-media }      # proof-of-delivery photos
+        - path: { type: Exact, value: /swagger-ui.html }           # Swagger UI of all services (through the gateway)
+        - path: { type: PathPrefix, value: /swagger-ui }
+        - path: { type: PathPrefix, value: /v3/api-docs }
+        - path: { type: RegularExpression, value: "/[a-z-]+-service/v3/api-docs" }   # e.g. /order-service/v3/api-docs
+      backendRefs:
+        - name: api-gateway
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: frontend
+  namespace: grocery
+  labels:
+    app.kubernetes.io/part-of: grocery
+spec:
+  parentRefs:
+    - name: grocery
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: / }
+      backendRefs:
+        - name: frontend
+          port: 80

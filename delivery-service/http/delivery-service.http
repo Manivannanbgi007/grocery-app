@@ -1,0 +1,320 @@
+### =====================================================================
+### delivery-service - ready-to-run requests
+###
+### Works with the VS Code "REST Client" extension and the IntelliJ HTTP Client.
+### Calls the service DIRECTLY on port 8110, so we send the X-User-Id / X-User-Role headers
+### ourselves (normally the API gateway adds them from the JWT).
+###
+### Seed data: delivery1 (user 5, Arjun Singh) works in zone 1 Indiranagar (PIN 560038, 560008, 560071),
+### delivery2 (user 8, Karthik Reddy) in zone 2 Koramangala. Both are KYC APPROVED.
+###
+### A delivery is created when an order becomes READY_FOR_PICKUP (OrderReadyForPickup event).
+### To get one: run order-service/http/order-service.http requests 1-12 first (Fresh Mart, PIN 560038).
+### The full flow through the gateway is in e2e/phase9-delivery.http.
+### =====================================================================
+
+@baseUrl = http://localhost:8110
+@deliveryId = {{mine.response.body.$.data.content[0].id}}
+@orderId = {{mine.response.body.$.data.content[0].orderId}}
+
+
+### 1. PARTNER (user 5): my profile (KYC status, zone, vehicle)
+GET {{baseUrl}}/api/v1/delivery/profile
+X-User-Id: 5
+X-User-Role: DELIVERY_PARTNER
+
+
+### 2. PARTNER (user 5): go online for 30 minutes -> a delivery waiting in my zone is assigned to me now
+POST {{baseUrl}}/api/v1/delivery/availability/online
+X-User-Id: 5
+X-User-Role: DELIVERY_PARTNER
+
+
+### 3. PARTNER (user 5): am I online, and until when?
+GET {{baseUrl}}/api/v1/delivery/availability
+X-User-Id: 5
+X-User-Role: DELIVERY_PARTNER
+
+
+### 4. PARTNER (user 5): my current deliveries (the newest is used by the next requests)
+# @name mine
+GET {{baseUrl}}/api/v1/delivery/deliveries?active=true
+X-User-Id: 5
+X-User-Role: DELIVERY_PARTNER
+
+
+### 5. PARTNER (user 5): one delivery with the pickup (store) and drop (customer) addresses
+GET {{baseUrl}}/api/v1/delivery/deliveries/{{deliveryId}}
+X-User-Id: 5
+X-User-Role: DELIVERY_PARTNER
+
+
+### 6. PARTNER (user 8, other zone): someone else's delivery -> 404 (a partner only sees their own deliveries)
+POST {{baseUrl}}/api/v1/delivery/deliveries/{{deliveryId}}/accept
+X-User-Id: 8
+X-User-Role: DELIVERY_PARTNER
+
+
+### 7. PARTNER (user 5): pick up before accepting -> 400 (ASSIGNED cannot become PICKED_UP)
+POST {{baseUrl}}/api/v1/delivery/deliveries/{{deliveryId}}/pick-up
+X-User-Id: 5
+X-User-Role: DELIVERY_PARTNER
+
+
+### 8. PARTNER (user 5): accept it
+POST {{baseUrl}}/api/v1/delivery/deliveries/{{deliveryId}}/accept
+X-User-Id: 5
+X-User-Role: DELIVERY_PARTNER
+
+
+### 9. PARTNER (user 5): collected at the store -> order OUT_FOR_DELIVERY (DeliveryPickedUp event)
+POST {{baseUrl}}/api/v1/delivery/deliveries/{{deliveryId}}/pick-up
+X-User-Id: 5
+X-User-Role: DELIVERY_PARTNER
+
+
+### 10. PARTNER (user 5): on the way to the customer
+POST {{baseUrl}}/api/v1/delivery/deliveries/{{deliveryId}}/start
+X-User-Id: 5
+X-User-Role: DELIVERY_PARTNER
+
+
+### 11. PARTNER (user 5): proof of delivery photo (JPEG, PNG or WEBP, max 5 MB)
+POST {{baseUrl}}/api/v1/delivery/deliveries/{{deliveryId}}/proof
+X-User-Id: 5
+X-User-Role: DELIVERY_PARTNER
+Content-Type: multipart/form-data; boundary=GroceryBoundary
+
+--GroceryBoundary
+Content-Disposition: form-data; name="photo"; filename="sample-proof.png"
+Content-Type: image/png
+
+< ./sample-proof.png
+--GroceryBoundary--
+
+
+### 12. PARTNER (user 5): delivered -> order DELIVERED, COD collected, payout added to my earnings
+POST {{baseUrl}}/api/v1/delivery/deliveries/{{deliveryId}}/deliver
+X-User-Id: 5
+X-User-Role: DELIVERY_PARTNER
+
+
+### 13. PARTNER (user 5): completed deliveries
+GET {{baseUrl}}/api/v1/delivery/deliveries?active=false
+X-User-Id: 5
+X-User-Role: DELIVERY_PARTNER
+
+
+### 14. PARTNER (user 5): earnings per day (India time)
+GET {{baseUrl}}/api/v1/delivery/earnings?from=2026-10-01&to=2026-12-31
+X-User-Id: 5
+X-User-Role: DELIVERY_PARTNER
+
+
+### 15. PARTNER (user 5): change KYC after approval -> 400
+PUT {{baseUrl}}/api/v1/delivery/profile/kyc
+Content-Type: application/json
+X-User-Id: 5
+X-User-Role: DELIVERY_PARTNER
+
+{
+  "vehicleType": "MOTORBIKE",
+  "vehicleNumber": "KA01AB1234",
+  "drivingLicenseNumber": "KA0120190001234",
+  "zoneId": 1
+}
+
+
+### 16. PARTNER (user 5): invalid KYC data -> 400 with one error per field
+PUT {{baseUrl}}/api/v1/delivery/profile/kyc
+Content-Type: application/json
+X-User-Id: 5
+X-User-Role: DELIVERY_PARTNER
+
+{
+  "vehicleType": "MOTORBIKE",
+  "vehicleNumber": "bike-123",
+  "drivingLicenseNumber": "",
+  "zoneId": null
+}
+
+
+### 17. PARTNER (user 5): go offline (no new deliveries are assigned)
+POST {{baseUrl}}/api/v1/delivery/availability/offline
+X-User-Id: 5
+X-User-Role: DELIVERY_PARTNER
+
+
+### 18. ADMIN: partners waiting for KYC approval
+GET {{baseUrl}}/api/v1/admin/delivery-partners?kycStatus=PENDING
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 19. ADMIN: delivery zones and the payout per delivery
+GET {{baseUrl}}/api/v1/admin/delivery-zones
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 20. ADMIN: new zone (a store in one of these PIN codes gets partners from this zone)
+POST {{baseUrl}}/api/v1/admin/delivery-zones
+Content-Type: application/json
+X-User-Id: 2
+X-User-Role: ADMIN
+
+{
+  "name": "HSR Layout {{$randomInt 100 999}}",
+  "city": "Bengaluru",
+  "pincodes": ["5601{{$randomInt 10 99}}"],
+  "partnerPayout": 45.00
+}
+
+
+### 21. ADMIN: all deliveries of partner 5
+GET {{baseUrl}}/api/v1/admin/deliveries?partnerUserId=5
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 22. ADMIN: deliveries nobody has taken yet (assign one by hand with the next request)
+GET {{baseUrl}}/api/v1/admin/deliveries?status=WAITING_FOR_PARTNER
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 23. ADMIN: assign a delivery by hand (an already delivered one -> 400)
+POST {{baseUrl}}/api/v1/admin/deliveries/{{deliveryId}}/assign
+Content-Type: application/json
+X-User-Id: 2
+X-User-Role: ADMIN
+
+{
+  "partnerUserId": 5
+}
+
+
+### 24. INTERNAL: the delivery of an order (other services)
+GET {{baseUrl}}/internal/deliveries/orders/{{orderId}}
+
+
+### =====================================================================
+### Customer rating of a delivery (Phase 11) - uses the order delivered in request 12
+### =====================================================================
+
+### 25. CUSTOMER (user 4): rate the delivery of my delivered order (5 stars)
+POST {{baseUrl}}/api/v1/delivery-ratings
+Content-Type: application/json
+X-User-Id: 4
+X-User-Role: CUSTOMER
+
+{
+  "orderId": {{orderId}},
+  "rating": 5,
+  "comment": "Very polite, on time"
+}
+
+
+### 26. CUSTOMER (user 4): rate it again -> 400 "You have already rated this delivery"
+POST {{baseUrl}}/api/v1/delivery-ratings
+Content-Type: application/json
+X-User-Id: 4
+X-User-Role: CUSTOMER
+
+{
+  "orderId": {{orderId}},
+  "rating": 1
+}
+
+
+### 27. CUSTOMER (user 4): my rating of that delivery
+GET {{baseUrl}}/api/v1/delivery-ratings/orders/{{orderId}}
+X-User-Id: 4
+X-User-Role: CUSTOMER
+
+
+### 28. PARTNER (user 5): my profile now shows my average rating
+GET {{baseUrl}}/api/v1/delivery/profile
+X-User-Id: 5
+X-User-Role: DELIVERY_PARTNER
+
+
+### =====================================================================
+### Live delivery tracking (Phase 18, docs/delivery-tracking.md) - the delivery of request 4.
+### Run these after request 8 (accepted) and before request 12 (delivered): positions are only taken in between.
+### The live stream (.../stream) never ends by itself, so a REST client shows nothing: follow it with
+###   curl.exe -N -H "X-User-Id: 4" -H "X-User-Role: CUSTOMER" http://localhost:8110/api/v1/delivery-tracking/orders/<orderId>/stream
+### =====================================================================
+
+### 29. PARTNER (user 5): share my position (the customer's stream gets it at once)
+PUT {{baseUrl}}/api/v1/delivery/deliveries/{{deliveryId}}/location
+Content-Type: application/json
+X-User-Id: 5
+X-User-Role: DELIVERY_PARTNER
+
+{
+  "latitude": 12.9750,
+  "longitude": 77.6405,
+  "accuracyMeters": 8,
+  "recordedAt": "{{$datetime iso8601}}"
+}
+
+
+### 30. PARTNER (user 5): again within 2 s -> 200 "Location skipped" (stored: false)
+PUT {{baseUrl}}/api/v1/delivery/deliveries/{{deliveryId}}/location
+Content-Type: application/json
+X-User-Id: 5
+X-User-Role: DELIVERY_PARTNER
+
+{
+  "latitude": 12.9751,
+  "longitude": 77.6405,
+  "accuracyMeters": 8,
+  "recordedAt": "{{$datetime iso8601}}"
+}
+
+
+### 31. PARTNER (user 5): a position without GPS (4.8 km accuracy) -> 400 "not precise enough"
+PUT {{baseUrl}}/api/v1/delivery/deliveries/{{deliveryId}}/location
+Content-Type: application/json
+X-User-Id: 5
+X-User-Role: DELIVERY_PARTNER
+
+{
+  "latitude": 12.9750,
+  "longitude": 77.6405,
+  "accuracyMeters": 4800,
+  "recordedAt": "{{$datetime iso8601}}"
+}
+
+
+### 32. PARTNER (user 8): someone else's delivery -> 404
+PUT {{baseUrl}}/api/v1/delivery/deliveries/{{deliveryId}}/location
+Content-Type: application/json
+X-User-Id: 8
+X-User-Role: DELIVERY_PARTNER
+
+{
+  "latitude": 12.9750,
+  "longitude": 77.6405,
+  "accuracyMeters": 8,
+  "recordedAt": "{{$datetime iso8601}}"
+}
+
+
+### 33. PARTNER (user 5): my delivery on the map (store, customer, my last position)
+GET {{baseUrl}}/api/v1/delivery/deliveries/{{deliveryId}}/tracking
+X-User-Id: 5
+X-User-Role: DELIVERY_PARTNER
+
+
+### 34. CUSTOMER (user 4): the delivery of my order now (what the tracking page shows first)
+GET {{baseUrl}}/api/v1/delivery-tracking/orders/{{orderId}}
+X-User-Id: 4
+X-User-Role: CUSTOMER
+
+
+### 35. CUSTOMER (user 7): someone else's order -> 404 (the same answer as "no delivery yet")
+GET {{baseUrl}}/api/v1/delivery-tracking/orders/{{orderId}}
+X-User-Id: 7
+X-User-Role: CUSTOMER

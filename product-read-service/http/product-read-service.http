@@ -1,0 +1,99 @@
+### =====================================================================
+### product-read-service - ready-to-run requests (READ side of the catalog)
+###
+### Calls the service DIRECTLY on port 8105. Everything here is answered from
+### Elasticsearch, which Debezium keeps in sync with product_db (MySQL).
+### Vendor requests need X-Store-Id (normally added by the API gateway from the JWT).
+###
+### Seed data: store 1 = Fresh Mart, store 2 = Green Basket; product 17 (Mango) is INACTIVE.
+### =====================================================================
+
+@baseUrl = http://localhost:8105
+
+
+### 1. PUBLIC: categories for the home page (active ones, in display order)
+GET {{baseUrl}}/api/v1/categories
+
+
+### 2. PUBLIC: search "tomato" (best matches first)
+GET {{baseUrl}}/api/v1/products?q=tomato
+
+
+### 3. PUBLIC: search by brand name
+GET {{baseUrl}}/api/v1/products?q=amul
+
+
+### 4. PUBLIC: search by category name ("dairy" matches the category "Dairy & Eggs")
+GET {{baseUrl}}/api/v1/products?q=dairy
+
+
+### 5. PUBLIC: Fresh Mart's fruits, cheapest first
+GET {{baseUrl}}/api/v1/products?storeId=1&categoryId=2&sort=PRICE_LOW_TO_HIGH
+
+
+### 6. PUBLIC: everything between 20 and 50 rupees, most expensive first
+GET {{baseUrl}}/api/v1/products?minPrice=20&maxPrice=50&sort=PRICE_HIGH_TO_LOW
+
+
+### 7. PUBLIC: second page of 5 products, by name
+GET {{baseUrl}}/api/v1/products?sort=NAME&page=1&size=5
+
+
+### 8. PUBLIC: one product
+GET {{baseUrl}}/api/v1/products/1
+
+
+### 9. PUBLIC: an INACTIVE product is not visible to customers -> 404
+GET {{baseUrl}}/api/v1/products/17
+
+
+### 10. VENDOR (store 1): all my products, including INACTIVE ones
+GET {{baseUrl}}/api/v1/vendor/products
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+
+### 11. VENDOR (store 1): only my hidden products
+GET {{baseUrl}}/api/v1/vendor/products?status=INACTIVE
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+
+### 12. VENDOR: another store's product -> 404
+GET {{baseUrl}}/api/v1/vendor/products/11
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1
+
+
+### 13. ADMIN: all products of Green Basket (store 2)
+GET {{baseUrl}}/api/v1/admin/products?storeId=2
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 14. ADMIN: all categories, also inactive ones
+GET {{baseUrl}}/api/v1/admin/categories
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 15. INTERNAL (service-to-service): any product in any status
+GET {{baseUrl}}/internal/products/17
+
+
+### 16. Page size above 100 -> 400
+GET {{baseUrl}}/api/v1/products?size=500
+
+
+### 17. PUBLIC: only products customers can buy right now (Pomegranate, product 13, is sold out)
+GET {{baseUrl}}/api/v1/products?storeId=2&inStockOnly=true
+
+
+### 18. VENDOR (store 1): my products that need restocking (stock from inventory-service)
+GET {{baseUrl}}/api/v1/vendor/products?lowStockOnly=true
+X-User-Id: 3
+X-User-Role: VENDOR
+X-Store-Id: 1

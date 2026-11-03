@@ -1,0 +1,8 @@
+# Test profile (no seed data).
+spring:
+  kafka:
+    properties:
+      schema.registry.url: mock://grocery-tests   # in-memory Schema Registry, shared by everything in the JVM
+app:
+  invoice:
+    storage-dir: ${java.io.tmpdir}/grocery-order-tests/invoices   # tests never write into the project folder

@@ -1,0 +1,14 @@
+{
+  "type": "record",
+  "name": "SocialLoginLinked",
+  "namespace": "com.grocery.events.user",
+  "doc": "A Google, Microsoft, Facebook or Apple account was connected to an existing account. notification-service tells the user (\"not you? reset your password\"). Producer: auth-service. Topic: grocery.user.events, key = userId.",
+  "fields": [
+    { "name": "eventId",    "type": "string", "doc": "Unique id of this event (UUID). Consumers use it to skip duplicates." },
+    { "name": "occurredAt", "type": { "type": "long", "logicalType": "timestamp-millis" } },
+    { "name": "userId",     "type": "long" },
+    { "name": "fullName",   "type": "string" },
+    { "name": "email",      "type": "string", "doc": "The account's email (where the notice goes)" },
+    { "name": "provider",   "type": "string", "doc": "The provider's name as shown to users, e.g. Google" }
+  ]
+}

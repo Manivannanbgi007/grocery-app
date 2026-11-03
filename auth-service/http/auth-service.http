@@ -1,0 +1,214 @@
+### =====================================================================
+### auth-service - ready-to-run requests
+###
+### Works with the VS Code "REST Client" extension and the IntelliJ HTTP Client.
+### Calls the service DIRECTLY on port 8101, so we send the X-User-* headers
+### ourselves (normally the API gateway adds them from the JWT).
+###
+### Seed users (local profile), password for all: Password@123
+###   1 superadmin@grocery.com  SUPER_ADMIN     6 vendor2@grocery.com    VENDOR (store 2)
+###   2 admin@grocery.com       ADMIN           7 customer2@grocery.com  CUSTOMER
+###   3 vendor1@grocery.com     VENDOR (store 1) 8 delivery2@grocery.com DELIVERY_PARTNER
+###   4 customer1@grocery.com   CUSTOMER        9 customer3@grocery.com  CUSTOMER (DISABLED)
+###   5 delivery1@grocery.com   DELIVERY_PARTNER 10 vendor3@grocery.com  VENDOR (no store yet)
+### =====================================================================
+
+@baseUrl = http://localhost:8101
+
+
+### 1. Register a new customer  (run twice to see the 409 "already registered" error)
+POST {{baseUrl}}/api/v1/auth/register
+Content-Type: application/json
+
+{
+  "fullName": "Neha Gupta",
+  "email": "neha.gupta@example.com",
+  "phone": "9876543210",
+  "password": "Password@123",
+  "role": "CUSTOMER"
+}
+
+
+### 2. Register with invalid data -> 400 with one error per field
+POST {{baseUrl}}/api/v1/auth/register
+Content-Type: application/json
+
+{
+  "fullName": "",
+  "email": "not-an-email",
+  "phone": "12345",
+  "password": "short",
+  "role": "CUSTOMER"
+}
+
+
+### 3. Register as ADMIN is not allowed -> 400
+POST {{baseUrl}}/api/v1/auth/register
+Content-Type: application/json
+
+{
+  "fullName": "Sneaky User",
+  "email": "sneaky@example.com",
+  "phone": "9876500000",
+  "password": "Password@123",
+  "role": "ADMIN"
+}
+
+
+### 4. Log in as a customer -> 200 with an access token (15 min) in the JSON, and the refresh token in the
+###    response header "Set-Cookie: refresh_token=...; HttpOnly; Secure; SameSite=Strict; Path=/api/v1/auth".
+###    The REST Client keeps that cookie and sends it with 4a-4c (docs/authentication.md).
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "customer1@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 4a. A new access token for the cookie -> 200, and a NEW cookie (the old token is replaced: rotation)
+POST {{baseUrl}}/api/v1/auth/refresh
+
+
+### 4b. Log out -> 204: the session ends and the cookie is removed
+POST {{baseUrl}}/api/v1/auth/logout
+
+
+### 4c. Refresh after the logout -> 401 "Your session has ended. Please log in again."
+POST {{baseUrl}}/api/v1/auth/refresh
+
+
+### 5. Log in as a vendor -> the JWT also contains storeId
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "vendor1@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 6. Log in with a wrong password -> 401
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "customer1@grocery.com",
+  "password": "WrongPassword1"
+}
+
+
+### 7. Log in with a disabled account -> 403
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "customer3@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 8. My account (customer 4)
+GET {{baseUrl}}/api/v1/auth/me
+X-User-Id: 4
+X-User-Role: CUSTOMER
+
+
+### 9. My account without the gateway header -> 401
+GET {{baseUrl}}/api/v1/auth/me
+
+
+### 10. Change my password (customer 7). Run once - afterwards the current password is NewPassword@456
+PUT {{baseUrl}}/api/v1/auth/me/password
+Content-Type: application/json
+X-User-Id: 7
+X-User-Role: CUSTOMER
+
+{
+  "currentPassword": "Password@123",
+  "newPassword": "NewPassword@456"
+}
+
+
+### 11. Forgot password -> in the local profile the reset token is returned in "data.resetToken"
+POST {{baseUrl}}/api/v1/auth/forgot-password
+Content-Type: application/json
+
+{
+  "email": "delivery2@grocery.com"
+}
+
+
+### 12. Reset password - paste the token from request 11
+POST {{baseUrl}}/api/v1/auth/reset-password
+Content-Type: application/json
+
+{
+  "token": "PASTE-TOKEN-FROM-REQUEST-11",
+  "newPassword": "NewPassword@456"
+}
+
+
+### 13. ADMIN: search active customers (paged, sorted by name)
+GET {{baseUrl}}/api/v1/admin/users?role=CUSTOMER&status=ACTIVE&page=0&size=10&sort=fullName,asc
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 14. ADMIN: search by keyword in name or email
+GET {{baseUrl}}/api/v1/admin/users?keyword=vendor
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 15. ADMIN: get one user
+GET {{baseUrl}}/api/v1/admin/users/3
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 16. ADMIN: disable delivery partner 8 (send "ACTIVE" to enable again)
+PATCH {{baseUrl}}/api/v1/admin/users/8/status
+Content-Type: application/json
+X-User-Id: 2
+X-User-Role: ADMIN
+
+{
+  "status": "DISABLED"
+}
+
+
+### 17. ADMIN: unknown user -> 404
+GET {{baseUrl}}/api/v1/admin/users/9999
+X-User-Id: 2
+X-User-Role: ADMIN
+
+
+### 18. SUPER_ADMIN: create a new admin
+POST {{baseUrl}}/api/v1/super-admin/admins
+Content-Type: application/json
+X-User-Id: 1
+X-User-Role: SUPER_ADMIN
+
+{
+  "fullName": "Operations Admin",
+  "email": "ops.admin@grocery.com",
+  "phone": "9123456780",
+  "password": "Password@123"
+}
+
+
+### 19. SUPER_ADMIN: make vendor 10 a customer (only vendors keep a storeId)
+PATCH {{baseUrl}}/api/v1/super-admin/users/10/role
+Content-Type: application/json
+X-User-Id: 1
+X-User-Role: SUPER_ADMIN
+
+{
+  "role": "CUSTOMER"
+}
+
+
+### 20. Health check (used by Kubernetes probes later)
+GET {{baseUrl}}/actuator/health

@@ -1,0 +1,4 @@
+# Test profile (no seed data). Uploaded test images go to a temporary folder.
+app:
+  media:
+    upload-dir: ${java.io.tmpdir}/grocery-product-test-uploads

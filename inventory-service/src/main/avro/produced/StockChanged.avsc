@@ -1,0 +1,18 @@
+{
+  "type": "record",
+  "name": "StockChanged",
+  "namespace": "com.grocery.events.inventory",
+  "doc": "The stock of a product changed. Carries the full current stock, so a consumer never needs to ask for it. Producer: inventory-service. Topic: grocery.inventory.events, key = productId. Consumed by product-read-service (stock in search).",
+  "fields": [
+    { "name": "eventId",           "type": "string", "doc": "Unique id of this event (UUID). Consumers use it to skip duplicates." },
+    { "name": "occurredAt",        "type": { "type": "long", "logicalType": "timestamp-millis" } },
+    { "name": "productId",         "type": "long" },
+    { "name": "storeId",           "type": "long" },
+    { "name": "quantityOnHand",    "type": "int", "doc": "Units in the store" },
+    { "name": "reservedQuantity",  "type": "int", "doc": "Units held for orders that are not delivered yet" },
+    { "name": "availableQuantity", "type": "int", "doc": "quantityOnHand - reservedQuantity: what customers can still buy" },
+    { "name": "lowStockThreshold", "type": "int" },
+    { "name": "lowStock",          "type": "boolean", "doc": "availableQuantity <= lowStockThreshold" },
+    { "name": "stockVersion",      "type": "long", "doc": "Increases with every change; consumers ignore an event older than what they already have" }
+  ]
+}

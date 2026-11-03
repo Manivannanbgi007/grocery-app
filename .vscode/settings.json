@@ -1,0 +1,5 @@
+{
+    "python.terminal.useEnvFile": true,
+    "java.compile.nullAnalysis.mode": "automatic",
+    "java.configuration.updateBuildConfiguration": "automatic"
+}

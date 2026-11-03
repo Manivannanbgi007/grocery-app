@@ -1,0 +1,30 @@
+# The only way in from outside: everything goes to the API gateway (like port 8080 locally).
+# Needs an ingress controller, e.g. ingress-nginx (see k8s/README.md). Then open http://grocery.localhost
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grocery
+  labels:
+    app.kubernetes.io/part-of: grocery
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 6m        # image and proof-photo uploads
+    # nginx waits 60 s by default; the gateway's longest route timeout is 180 s (the AI assistant), and the gateway
+    # answers every other slow request itself with 504 after 10 s. So the gateway, not nginx, decides about timeouts.
+    # The live delivery tracking stream stays open for minutes: it works because the read timeout counts the time
+    # BETWEEN two pieces of data, and the stream sends a keep-alive every 15 s (keep this timeout well above that).
+    # Its responses carry "X-Accel-Buffering: no", so nginx passes every update on at once (docs/delivery-tracking.md).
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "180"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "180"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: grocery.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway
+                port:
+                  name: http

@@ -1,0 +1,153 @@
+### =====================================================================
+### END-TO-END (Phase 5): stock shows up in product search, through the API gateway (port 8080)
+###
+###   vendor sets stock -> inventory-service (asks product-read-service: "is this my product?")
+###        -> MySQL + outbox -> Debezium -> Kafka (grocery.inventory.events)
+###        -> product-read-service -> Elasticsearch (availableQuantity, inStock, lowStock)
+###
+### Needs: infrastructure, auth-service, product-service, product-read-service, inventory-service,
+###        api-gateway, and the connectors (scripts\register-connectors.ps1).
+### Written for the VS Code "REST Client" extension. Run the requests IN ORDER.
+### "wait" steps: a change reaches search after about a second (eventual consistency).
+### =====================================================================
+
+@gatewayUrl = http://localhost:8080
+
+@vendorToken = {{vendorLogin.response.body.$.data.accessToken}}
+@vendor2Token = {{vendor2Login.response.body.$.data.accessToken}}
+@adminToken = {{adminLogin.response.body.$.data.accessToken}}
+@productId = {{newProduct.response.body.$.data.id}}
+
+
+### 1. vendor1 (Fresh Mart, store 1) logs in
+# @name vendorLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "vendor1@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 2. vendor2 (Green Basket, store 2) logs in
+# @name vendor2Login
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "vendor2@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 3. The admin logs in
+# @name adminLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 4. vendor1 adds a new product (product-service)
+# @name newProduct
+POST {{gatewayUrl}}/api/v1/vendor/products
+Authorization: Bearer {{vendorToken}}
+Content-Type: application/json
+
+{
+  "categoryId": 3,
+  "name": "Country Brown Eggs",
+  "sku": "FM-DRY-004",
+  "unit": "PIECE",
+  "unitQuantity": 12,
+  "price": 120.00,
+  "discountPercentage": 0,
+  "taxPercentage": 0
+}
+
+
+### 5. (wait) Customers find it, but it is NOT in stock yet: no stock record -> availableQuantity 0, inStock false
+# @wait 2
+GET {{gatewayUrl}}/api/v1/products?q=brown
+
+
+### 6. vendor1 sets its stock to 30 (inventory-service checks the product with product-read-service first)
+PUT {{gatewayUrl}}/api/v1/vendor/inventory/{{productId}}
+Authorization: Bearer {{vendorToken}}
+Content-Type: application/json
+
+{
+  "quantityOnHand": 30
+}
+
+
+### 7. (wait) Search now shows it in stock: availableQuantity 30, inStock true, lowStock false
+# @wait 2
+GET {{gatewayUrl}}/api/v1/products?q=brown&inStockOnly=true
+
+
+### 8. Sold out: vendor1 sets the stock to 0 (StockChanged + LowStockDetected)
+PUT {{gatewayUrl}}/api/v1/vendor/inventory/{{productId}}
+Authorization: Bearer {{vendorToken}}
+Content-Type: application/json
+
+{
+  "quantityOnHand": 0
+}
+
+
+### 9. (wait) Customers who hide sold-out products no longer see it -> empty page
+# @wait 2
+GET {{gatewayUrl}}/api/v1/products?q=brown&inStockOnly=true
+
+
+### 10. ...without the filter it is still listed, as out of stock (inStock false, availableQuantity 0)
+GET {{gatewayUrl}}/api/v1/products/{{productId}}
+
+
+### 11. vendor1's product list (product-read-service) with stock: only low stock -> new product, 7 and 17
+GET {{gatewayUrl}}/api/v1/vendor/products?lowStockOnly=true
+Authorization: Bearer {{vendorToken}}
+
+
+### 12. vendor2 cannot touch vendor1's product -> 404
+PUT {{gatewayUrl}}/api/v1/vendor/inventory/{{productId}}
+Authorization: Bearer {{vendor2Token}}
+Content-Type: application/json
+
+{
+  "quantityOnHand": 999
+}
+
+
+### 13. Goods arrive: vendor1 adds 24 units -> back in stock
+POST {{gatewayUrl}}/api/v1/vendor/inventory/{{productId}}/additions
+Authorization: Bearer {{vendorToken}}
+Content-Type: application/json
+
+{
+  "quantity": 24
+}
+
+
+### 14. (wait) In stock again for customers: availableQuantity 24
+# @wait 2
+GET {{gatewayUrl}}/api/v1/products?q=brown&inStockOnly=true
+
+
+### 15. The admin sees low stock across all stores (inventory-service)
+GET {{gatewayUrl}}/api/v1/admin/inventory?lowStockOnly=true
+Authorization: Bearer {{adminToken}}
+
+
+### 16. Without a token the vendor inventory is closed -> 401
+GET {{gatewayUrl}}/api/v1/vendor/inventory
+
+
+### 17. CLEAN UP: vendor1 deletes the test product (it leaves search; its stock record stays in inventory_db)
+DELETE {{gatewayUrl}}/api/v1/vendor/products/{{productId}}
+Authorization: Bearer {{vendorToken}}

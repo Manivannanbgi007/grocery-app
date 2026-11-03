@@ -1,0 +1,28 @@
+-- Grocery stores selling on the platform. One store per vendor.
+CREATE TABLE stores (
+    id                     BIGINT        NOT NULL AUTO_INCREMENT,
+    owner_user_id          BIGINT        NOT NULL COMMENT 'Vendor user id from auth-service',
+    name                   VARCHAR(100)  NOT NULL,
+    description            VARCHAR(500)  NULL,
+    phone                  VARCHAR(15)   NOT NULL,
+    email                  VARCHAR(150)  NULL,
+    address_line1          VARCHAR(150)  NOT NULL,
+    address_line2          VARCHAR(150)  NULL,
+    city                   VARCHAR(60)   NOT NULL,
+    state                  VARCHAR(60)   NOT NULL,
+    pincode                VARCHAR(6)    NOT NULL,
+    latitude               DECIMAL(9,6)  NULL,
+    longitude              DECIMAL(9,6)  NULL,
+    status                 VARCHAR(20)   NOT NULL COMMENT 'PENDING_APPROVAL, ACTIVE, REJECTED, DISABLED',
+    status_reason          VARCHAR(255)  NULL     COMMENT 'Why it was rejected or disabled',
+    commission_percentage  DECIMAL(5,2)  NOT NULL,
+    accepting_orders       BOOLEAN       NOT NULL DEFAULT TRUE,
+    approved_at            DATETIME(6)   NULL,
+    approved_by_user_id    BIGINT        NULL,
+    created_at             DATETIME(6)   NOT NULL,
+    updated_at             DATETIME(6)   NOT NULL,
+    version                BIGINT        NOT NULL DEFAULT 0,
+    PRIMARY KEY (id),
+    CONSTRAINT uk_stores_owner_user_id UNIQUE (owner_user_id),
+    INDEX idx_stores_status_city (status, city)
+);

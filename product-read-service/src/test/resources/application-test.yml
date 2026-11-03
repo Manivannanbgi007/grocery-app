@@ -1,0 +1,5 @@
+# Test profile.
+spring:
+  kafka:
+    properties:
+      schema.registry.url: mock://grocery-tests   # in-memory Schema Registry, shared by everything in the JVM

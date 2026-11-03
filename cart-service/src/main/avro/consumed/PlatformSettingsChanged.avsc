@@ -1,0 +1,45 @@
+{
+  "type": "record",
+  "name": "PlatformSettingsChanged",
+  "namespace": "com.grocery.events.platform",
+  "doc": "The super admin changed the platform settings. cart-service uses the new delivery fee and minimum order value. Producer: platform-service. Topic: grocery.platform.events, key = \"settings\".",
+  "fields": [
+    {
+      "name": "eventId",
+      "type": "string",
+      "doc": "Unique id of this event (UUID). Consumers use it to skip duplicates."
+    },
+    {
+      "name": "occurredAt",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      }
+    },
+    {
+      "name": "currency",
+      "type": "string"
+    },
+    {
+      "name": "deliveryFee",
+      "type": "string",
+      "doc": "Decimal as text, e.g. \"30.00\""
+    },
+    {
+      "name": "freeDeliveryFrom",
+      "type": "string"
+    },
+    {
+      "name": "minimumOrderValue",
+      "type": "string"
+    },
+    {
+      "name": "changedByUserId",
+      "type": [
+        "null",
+        "long"
+      ],
+      "default": null
+    }
+  ]
+}

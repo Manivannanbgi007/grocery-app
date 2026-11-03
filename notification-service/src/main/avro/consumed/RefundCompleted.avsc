@@ -1,0 +1,42 @@
+{
+  "type": "record",
+  "name": "RefundCompleted",
+  "namespace": "com.grocery.events.payment",
+  "doc": "The money of a cancelled or rejected order went back to the customer. Producer: payment-service. Topic: grocery.payment.events, key = orderId.",
+  "fields": [
+    {
+      "name": "eventId",
+      "type": "string",
+      "doc": "Unique id of this event (UUID). Consumers use it to skip duplicates."
+    },
+    {
+      "name": "occurredAt",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      }
+    },
+    {
+      "name": "paymentId",
+      "type": "long"
+    },
+    {
+      "name": "orderId",
+      "type": "long"
+    },
+    {
+      "name": "customerUserId",
+      "type": "long"
+    },
+    {
+      "name": "amount",
+      "type": "string",
+      "doc": "Amount as decimal text, e.g. \"201.00\" (exact, readable in Kafka UI)"
+    },
+    {
+      "name": "refundReference",
+      "type": "string",
+      "doc": "The payment gateway's refund id"
+    }
+  ]
+}

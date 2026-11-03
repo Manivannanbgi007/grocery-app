@@ -1,0 +1,686 @@
+# =====================================================================
+#  Grocery Platform - local development infrastructure
+#
+#  This file runs ONLY the supporting infrastructure. The Spring Boot
+#  microservices run directly on your machine and reach these
+#  containers through localhost ports.
+#
+#  Start (recommended):  ..\scripts\start-infra.ps1
+#  Start (manual):       docker compose up -d --build --wait
+#  Optional profiles:    --profile tools       -> Kibana
+#                        --profile monitoring  -> Prometheus + Alertmanager + Grafana + Loki + Jaeger
+#                        --profile ai          -> Ollama + the Qwen model (AI assistant)
+#
+#  Image versions and passwords live in .env (same folder).
+# =====================================================================
+
+name: grocery
+
+services:
+
+  # -------------------------------------------------------------------
+  # MySQL: one container hosting one database per microservice.
+  # The init script creates the databases and users on first start.
+  # Host port 3307 (not 3306) so it never clashes with a MySQL server
+  # installed directly on the developer's machine.
+  # -------------------------------------------------------------------
+  mysql:
+    image: mysql:${MYSQL_VERSION}
+    container_name: grocery-mysql
+    ports:
+      - "3307:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    command:
+      - --server-id=1                         # unique id, required for the binlog (Debezium)
+      - --log-bin=mysql-bin                   # binary log = the source of CDC events
+      - --binlog-expire-logs-seconds=604800   # keep 7 days of binlog
+      - --gtid-mode=ON                        # recommended by Debezium
+      - --enforce-gtid-consistency=ON
+      - --default-time-zone=+00:00            # all timestamps are stored in UTC
+      # Room for every connection pool + Debezium + tools (MySQL's default 151 was used up: 13 services x 10 + Debezium).
+      - --max-connections=300
+      # A query over 1 s counts as slow (MySQL's default is 10 s): counted for the MySQLSlowQueries alert and written
+      # to the slow log, with its text and time: docker exec grocery-mysql tail -n 40 /var/lib/mysql/slow.log
+      - --long-query-time=1
+      - --slow-query-log=ON
+      - --slow-query-log-file=/var/lib/mysql/slow.log
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  # -------------------------------------------------------------------
+  # Kafka: single broker in KRaft mode (no ZooKeeper).
+  #   - Containers connect to  kafka:29092
+  #   - Your Spring Boot apps connect to  localhost:9092
+  # Auto topic creation is OFF: topics are listed in kafka/create-topics.sh
+  # -------------------------------------------------------------------
+  kafka:
+    image: confluentinc/cp-kafka:${CONFLUENT_VERSION}
+    container_name: grocery-kafka
+    hostname: kafka
+    ports:
+      - "9092:9092"   # apps on your machine
+      - "9094:9094"   # apps in containers or Kubernetes pods (advertised as host.docker.internal:9094)
+    environment:
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      # INTERNAL = other containers of this file, EXTERNAL = your machine, DOCKER = containers/pods outside this file
+      KAFKA_LISTENERS: INTERNAL://kafka:29092,CONTROLLER://kafka:29093,EXTERNAL://0.0.0.0:9092,DOCKER://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092,DOCKER://host.docker.internal:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,DOCKER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_HEAP_OPTS: "-Xms512m -Xmx512m"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+      - ./kafka/create-topics.sh:/scripts/create-topics.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
+
+  # -------------------------------------------------------------------
+  # Schema Registry: stores the Avro schemas of every Kafka message.
+  # BACKWARD compatibility = new schema versions must still read old data.
+  # -------------------------------------------------------------------
+  schema-registry:
+    image: confluentinc/cp-schema-registry:${CONFLUENT_VERSION}
+    container_name: grocery-schema-registry
+    hostname: schema-registry
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:29092
+      SCHEMA_REGISTRY_SCHEMA_COMPATIBILITY_LEVEL: backward
+      SCHEMA_REGISTRY_HEAP_OPTS: "-Xms256m -Xmx256m"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8081/subjects > /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  # -------------------------------------------------------------------
+  # Kafka Connect + Debezium: reads the MySQL binlog and publishes
+  #   - outbox rows as domain events (grocery.*.events)
+  #   - product table changes (cdc.product_db.*)
+  # Connector definitions live in <service>/debezium/*.json and are
+  # registered with scripts/register-connectors.ps1
+  # Metrics (connector state, Debezium lag) for Prometheus: kafka-connect:9404
+  # on the Docker network (JMX exporter agent, rules in kafka-connect/jmx-exporter.yml).
+  # -------------------------------------------------------------------
+  kafka-connect:
+    build:
+      context: ./kafka-connect
+      args:
+        CONFLUENT_VERSION: ${CONFLUENT_VERSION}
+        DEBEZIUM_VERSION: ${DEBEZIUM_VERSION}
+        JMX_EXPORTER_VERSION: ${JMX_EXPORTER_VERSION}
+    image: grocery/kafka-connect-debezium:${CONFLUENT_VERSION}-${DEBEZIUM_VERSION}-jmx${JMX_EXPORTER_VERSION}
+    container_name: grocery-kafka-connect
+    hostname: kafka-connect
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    ports:
+      - "8083:8083"
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: kafka:29092
+      CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
+      CONNECT_REST_PORT: 8083
+      CONNECT_GROUP_ID: grocery-connect
+      CONNECT_CONFIG_STORAGE_TOPIC: _connect-configs
+      CONNECT_OFFSET_STORAGE_TOPIC: _connect-offsets
+      CONNECT_STATUS_STORAGE_TOPIC: _connect-status
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+      CONNECT_VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
+      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components
+      # The producer of every connector: idempotent, so a retry after a lost acknowledgement cannot write an event
+      # twice. Kafka Connect switches idempotence off by default (its log showed enable.idempotence = false); acks=all
+      # and unlimited retries are already its defaults. Consumers still drop duplicates: after a crash Connect can send
+      # an event again (at-least-once). This only stops the producer from creating extra copies.
+      CONNECT_PRODUCER_ENABLE_IDEMPOTENCE: "true"
+      KAFKA_HEAP_OPTS: "-Xms512m -Xmx1g"
+      # The Prometheus JMX exporter agent: metrics on port 9404. Note: KAFKA_OPTS applies to every Kafka tool started in
+      # this container, so run kafka-topics etc. in the kafka container (a second agent could not open port 9404).
+      KAFKA_OPTS: "-javaagent:/opt/jmx/jmx_prometheus_javaagent.jar=9404:/opt/jmx/connect.yml"
+    volumes:
+      - ./kafka-connect/jmx-exporter.yml:/opt/jmx/connect.yml:ro   # which MBeans become metrics (restart after a change)
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8083/connectors > /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 40
+      start_period: 40s
+
+  # -------------------------------------------------------------------
+  # Elasticsearch: read model for product search (CQRS read side).
+  # Single node, security disabled - local development only.
+  # -------------------------------------------------------------------
+  elasticsearch:
+    image: elasticsearch:${ELASTIC_VERSION}
+    container_name: grocery-elasticsearch
+    ports:
+      - "9200:9200"
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      cluster.routing.allocation.disk.threshold_enabled: "false"   # don't go read-only on a full laptop disk
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+      path.repo: /usr/share/elasticsearch/snapshots                # where snapshot repositories may be (es-snapshots)
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+      - es-snapshots:/usr/share/elasticsearch/snapshots
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s' > /dev/null"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+
+  # Registers the snapshot repository and the daily snapshot policy of the search indexes
+  # (infrastructure/elasticsearch/setup-snapshots.sh), then stops. Uses the Elasticsearch image for its curl.
+  # As root, only to give the new es-snapshots folder to Elasticsearch's user (Docker creates it owned by root).
+  elasticsearch-setup:
+    image: elasticsearch:${ELASTIC_VERSION}
+    container_name: grocery-elasticsearch-setup
+    user: "0"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    volumes:
+      - ./elasticsearch/setup-snapshots.sh:/setup-snapshots.sh:ro
+      - es-snapshots:/usr/share/elasticsearch/snapshots
+    entrypoint: ["bash", "/setup-snapshots.sh"]
+    restart: "no"
+
+  # -------------------------------------------------------------------
+  # Redis: gateway rate limiting, caching, delivery-partner presence.
+  # -------------------------------------------------------------------
+  redis:
+    image: redis:${REDIS_VERSION}
+    container_name: grocery-redis
+    # Memory and users (docs/resilience.md, "Redis"):
+    #   --maxmemory 256mb               all data stays far below; a growing key cannot take the machine's memory
+    #   --maxmemory-policy allkeys-lru  when full, drop the least recently used key (all keys here are temporary)
+    #   --user <name> <rules>           one Redis ACL user: on/off, >password, ~keys it may use, &Pub/Sub channels,
+    #                                   then the commands (-@all = none, +x = allow x)
+    # The default user (no password) is switched off: every client logs in with its own name and password.
+    # A list with ONE argument per entry: Redis wants the name and every rule separately, and a single command
+    # string does not work (Compose would read the ">" of a password like a shell redirection and drop the rest).
+    command: [
+      "redis-server",
+      "--maxmemory", "256mb",
+      "--maxmemory-policy", "allkeys-lru",
+      "--user", "default", "off",
+      "--user", "admin", "on", ">${REDIS_ADMIN_PASSWORD}", "~*", "&*", "+@all",
+      "--user", "gateway", "on", ">${REDIS_GATEWAY_PASSWORD}", "~request_rate_limiter.*",
+        "-@all", "+@connection", "+info", "+evalsha", "+eval", "+get", "+setex", "+time",
+      "--user", "delivery", "on", ">${REDIS_DELIVERY_PASSWORD}", "~delivery:*", "&delivery-tracking",
+        "-@all", "+@connection", "+info", "+get", "+set", "+del", "+exists", "+expire", "+publish", "+subscribe", "+unsubscribe",
+      "--user", "exporter", "on", ">${REDIS_EXPORTER_PASSWORD}", "~*", "&*",
+        "-@all", "+@connection", "+memory", "-readonly", "+strlen", "+config|get", "+xinfo", "+pfcount", "-quit", "+zcard",
+        "+type", "+xlen", "-readwrite", "-command", "+client", "-wait", "+scard", "+llen", "+hlen", "+get", "+eval",
+        "+slowlog", "+cluster|info", "-hello", "-echo", "+info", "+latency", "+scan", "-reset", "-auth", "-asking"
+    ]
+    environment:
+      REDIS_ADMIN_PASSWORD: ${REDIS_ADMIN_PASSWORD}   # for the health check below
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      # redis-cli exits with 0 even when the login fails, so check for the answer PONG
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning --user admin --pass \"$$REDIS_ADMIN_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # -------------------------------------------------------------------
+  # Mailpit: fake SMTP server. Every email the services send shows up
+  # in the web inbox at http://localhost:8025 - nothing leaves your machine.
+  # -------------------------------------------------------------------
+  mailpit:
+    image: axllent/mailpit:${MAILPIT_VERSION}
+    container_name: grocery-mailpit
+    ports:
+      - "1025:1025"   # SMTP (used by the services)
+      - "8025:8025"   # web inbox
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # -------------------------------------------------------------------
+  # Kafka UI: browse topics, messages, schemas, connectors and DLTs.
+  # http://localhost:8090
+  # -------------------------------------------------------------------
+  kafka-ui:
+    image: kafbat/kafka-ui:${KAFKA_UI_VERSION}
+    container_name: grocery-kafka-ui
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+      kafka-connect:
+        condition: service_healthy
+    ports:
+      - "8090:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: grocery-local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME: debezium-connect
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS: http://kafka-connect:8083
+
+  # -------------------------------------------------------------------
+  # Redis Insight: the official Redis GUI. Browse keys, their values and
+  # how long they live (TTL), run Redis commands, watch commands live.
+  # http://localhost:5540 - already connected to the grocery Redis.
+  # Guide: docs/redis-insight.md
+  # -------------------------------------------------------------------
+  redisinsight:
+    image: redis/redisinsight:${REDISINSIGHT_VERSION}
+    container_name: grocery-redisinsight
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "5540:5540"
+    environment:
+      RI_REDIS_HOST: redis                       # the Redis container, inside the Docker network
+      RI_REDIS_PORT: "6379"
+      RI_REDIS_USERNAME: admin                   # Redis Insight is a tool for people: it may see and change everything
+      RI_REDIS_PASSWORD: ${REDIS_ADMIN_PASSWORD}
+      RI_REDIS_ALIAS: grocery-redis              # the name in Redis Insight's database list
+      RI_ACCEPT_TERMS_AND_CONDITIONS: "true"     # no licence screen on first start; analytics and notifications stay off
+    volumes:
+      - redisinsight-data:/data                  # remembers your settings and command history
+    healthcheck:
+      # 127.0.0.1, not localhost: inside the container "localhost" is tried as IPv6 first, and the app listens on IPv4
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5540/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # ===================================================================
+  #  Optional: profile "tools"
+  # ===================================================================
+
+  # Kibana: look into the Elasticsearch indexes of product-read-service (products, product_stock, categories).
+  # http://localhost:5601 - no login (Elasticsearch runs without security locally). Guide: docs/kibana.md
+  # Must be exactly the Elasticsearch version (ELASTIC_VERSION in .env). Kibana keeps its own data (data views,
+  # saved searches) in Elasticsearch (.kibana* indexes), so it needs no volume of its own.
+  kibana:
+    image: kibana:${ELASTIC_VERSION}
+    container_name: grocery-kibana
+    profiles: ["tools"]
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    ports:
+      - "5601:5601"
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+      SERVER_NAME: grocery-kibana
+      SERVER_PUBLICBASEURL: http://localhost:5601      # the address in your browser (Kibana warns without it)
+      TELEMETRY_OPTIN: "false"                         # send no usage data to Elastic ...
+      TELEMETRY_ALLOWCHANGINGOPTINSTATUS: "false"      # ... and don't ask about it
+      NEWSFEED_ENABLED: "false"                        # no Elastic news feed (it would load from the internet)
+      SECURITY_SHOWINSECURECLUSTERWARNING: "false"     # no "Your data is not secure" pop-up: local only, on purpose
+      # Kibana encrypts some of its saved settings with this key; without it, parts of Kibana stay switched off
+      XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY: ${KIBANA_ENCRYPTION_KEY}
+      NODE_OPTIONS: "--max-old-space-size=1024"        # Kibana is a Node.js app: at most 1 GB heap (else it takes 2 GB)
+    healthcheck:
+      # /api/status answers 200 once Kibana is ready (503 while it starts: about a minute)
+      test: ["CMD-SHELL", "curl -fs -o /dev/null http://localhost:5601/api/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  # Creates Kibana's data views (infrastructure/kibana/setup-kibana.sh) once Kibana is ready, then stops.
+  # Uses the Kibana image only because it already has curl and bash (nothing extra to download).
+  kibana-setup:
+    image: kibana:${ELASTIC_VERSION}
+    container_name: grocery-kibana-setup
+    profiles: ["tools"]
+    depends_on:
+      kibana:
+        condition: service_healthy
+    volumes:
+      - ./kibana/setup-kibana.sh:/setup-kibana.sh:ro
+    entrypoint: ["bash", "/setup-kibana.sh"]
+    restart: "no"
+
+  # A fake OpenID provider for trying social login without Google, Microsoft ... credentials (docs/social-login.md).
+  # Its login page accepts any user id and the claims you type (email, email_verified, name); its issuer is
+  # http://127.0.0.1:8099/test. On 127.0.0.1, not localhost: another site than the shop (http://localhost:5173), like a
+  # real provider, so cookie rules are tested for real. auth-service offers it when SOCIAL_TEST_CLIENT_ID is set.
+  oauth-test-provider:
+    image: ghcr.io/navikt/mock-oauth2-server:${MOCK_OAUTH2_SERVER_VERSION}
+    container_name: grocery-oauth-test-provider
+    profiles: ["tools"]
+    ports:
+      - "127.0.0.1:8099:8080"
+    environment:
+      JSON_CONFIG: '{"interactiveLogin": true}'
+
+  # ===================================================================
+  #  Optional: profile "monitoring"
+  # ===================================================================
+
+  # Everything below is explained in docs/observability.md.
+
+  # Prometheus: reads the metrics of every service (/actuator/prometheus) every 15 s, checks their health through
+  # the blackbox exporter, and evaluates the alert rules. http://localhost:9090
+  prometheus:
+    image: prom/prometheus:${PROMETHEUS_VERSION}
+    container_name: grocery-prometheus
+    profiles: ["monitoring"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d          # keep 7 days of metrics
+      - --enable-feature=exemplar-storage          # keep the trace ids of sample requests (Grafana links them to Jaeger)
+      - --web.enable-lifecycle                     # reload after a config change: POST http://localhost:9090/-/reload
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus:/etc/prometheus:ro            # prometheus.yml, targets/services.yml, alerts/, tests/
+      - prometheus-data:/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/-/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # Alertmanager: groups the firing alerts and sends them by email - locally to Mailpit (http://localhost:8025).
+  # http://localhost:9093 (alerts, silences)
+  alertmanager:
+    image: prom/alertmanager:${ALERTMANAGER_VERSION}
+    container_name: grocery-alertmanager
+    profiles: ["monitoring"]
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager            # silences survive restarts
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9093/-/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # Blackbox exporter: calls /actuator/health of every service for Prometheus (probe_success 1 = UP, 0 = not).
+  # Try one check by hand: http://localhost:9115/probe?module=spring_health&debug=true&target=http://host.docker.internal:8101/actuator/health
+  blackbox-exporter:
+    image: prom/blackbox-exporter:${BLACKBOX_EXPORTER_VERSION}
+    container_name: grocery-blackbox-exporter
+    profiles: ["monitoring"]
+    ports:
+      - "9115:9115"
+    volumes:
+      - ./blackbox/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9115/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # Kafka exporter: reads from the broker how far behind every consumer group is (lag per group, topic and partition)
+  # and how many messages every topic has. Unlike the services' own metrics it still reports a group whose service is
+  # stopped or stuck. Docker network only (Prometheus scrapes kafka-exporter:9308); no port on your machine.
+  # --kafka.version: the broker's Kafka version (Confluent 8.2 = Kafka 4.2); Kafka 4 refuses the default "2.0.0".
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:${KAFKA_EXPORTER_VERSION}
+    container_name: grocery-kafka-exporter
+    profiles: ["monitoring"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command:
+      - --kafka.server=kafka:29092
+      - --kafka.version=4.2.0
+      - --topic.exclude=^_.*                                   # Kafka's and Connect's internal topics
+      - --group.exclude=^(schema-registry|grocery-connect)$    # infrastructure groups, not our services
+    restart: unless-stopped                                     # it exits if Kafka is unreachable at start
+
+  # Exporters of the data stores: each one asks its store for its statistics and shows them to Prometheus.
+  # Docker network only (no port on your machine). Alerts: group "infrastructure"; Grafana: Grocery infrastructure.
+
+  # MySQL: connections (also per service user), slow queries, InnoDB, binary log. Logs in as the "exporter" user, which
+  # may only read monitoring tables and open 3 connections (mysql/init/01-create-databases-and-users.sql).
+  mysqld-exporter:
+    image: prom/mysqld-exporter:${MYSQLD_EXPORTER_VERSION}
+    container_name: grocery-mysqld-exporter
+    profiles: ["monitoring"]
+    depends_on:
+      mysql:
+        condition: service_healthy
+    command:
+      - --mysqld.address=mysql:3306
+      - --mysqld.username=exporter
+      - --collect.info_schema.processlist      # connections per user = per service (auth_user, order_user ...)
+    environment:
+      MYSQLD_EXPORTER_PASSWORD: ${MYSQL_EXPORTER_PASSWORD}
+    restart: unless-stopped
+
+  # Redis: memory, keys, evictions, connections, commands (INFO). No login yet (Redis has no users locally).
+  redis-exporter:
+    image: oliver006/redis_exporter:${REDIS_EXPORTER_VERSION}
+    container_name: grocery-redis-exporter
+    profiles: ["monitoring"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    command:
+      - --redis.addr=redis://redis:6379
+    environment:
+      REDIS_USER: exporter                       # a Redis user that may only read statistics (INFO, SLOWLOG ...)
+      REDIS_PASSWORD: ${REDIS_EXPORTER_PASSWORD}
+    restart: unless-stopped
+
+  # Elasticsearch: cluster health, heap, disk, thread pools (rejected searches and writes), documents per index.
+  elasticsearch-exporter:
+    image: prometheuscommunity/elasticsearch-exporter:${ELASTICSEARCH_EXPORTER_VERSION}
+    container_name: grocery-elasticsearch-exporter
+    profiles: ["monitoring"]
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    command:
+      - --es.uri=http://elasticsearch:9200
+      - --es.indices                           # documents and size per index (products, categories, product_stock)
+    restart: unless-stopped
+
+  # Loki: stores the log lines of all services. Push API: http://localhost:3100/loki/api/v1/push
+  # Start the services with LOKI_ENABLED=true to send their logs here (logback-spring.xml).
+  # The image has no shell, so there is no healthcheck; check-health.ps1 asks http://localhost:3100/ready.
+  loki:
+    image: grafana/loki:${LOKI_VERSION}
+    container_name: grocery-loki
+    profiles: ["monitoring"]
+    command: ["-config.file=/etc/loki/loki-config.yml"]
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki-data:/loki
+
+  # Grafana: dashboards and alerts on top of Prometheus (metrics), Loki (logs), Jaeger (traces) and Alertmanager.
+  # http://localhost:3000 (admin / see .env). Data sources and dashboards: grafana/provisioning.
+  grafana:
+    image: grafana/grafana:${GRAFANA_VERSION}
+    container_name: grocery-grafana
+    profiles: ["monitoring"]
+    depends_on:
+      - prometheus
+      - loki
+      - jaeger
+      - alertmanager
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # Jaeger: traces - one request followed through the gateway and every service it calls. UI: http://localhost:16686
+  # The services send their spans with OTLP (HTTP 4318) when TRACING_EXPORT_ENABLED=true. Config: jaeger/jaeger-config.yml
+  jaeger:
+    image: jaegertracing/jaeger:${JAEGER_VERSION}
+    container_name: grocery-jaeger
+    profiles: ["monitoring"]
+    command: ["--config", "file:/etc/jaeger/config.yml"]
+    ports:
+      - "16686:16686"   # UI and API (Grafana's Jaeger data source)
+      - "4317:4317"     # OTLP over gRPC
+      - "4318:4318"     # OTLP over HTTP (used by the services: http://localhost:4318/v1/traces)
+    volumes:
+      - ./jaeger/jaeger-config.yml:/etc/jaeger/config.yml:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:13133/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # ===================================================================
+  #  Optional: profile "ai" (AI shopping assistant, docs/ai-assistant-plan.md)
+  # ===================================================================
+
+  # Ollama: runs the language model locally. API on http://localhost:11434
+  # (mcp-client-service calls /api/chat). Without an NVIDIA GPU the model runs on the CPU.
+  ollama:
+    image: ollama/ollama:${OLLAMA_VERSION}
+    container_name: grocery-ollama
+    profiles: ["ai"]
+    ports:
+      - "11434:11434"
+    environment:
+      OLLAMA_KEEP_ALIVE: 30m          # keep the model in memory 30 min after a request (loading it takes seconds)
+      OLLAMA_MAX_LOADED_MODELS: "1"   # only one model in memory at a time
+      OLLAMA_NUM_PARALLEL: "2"        # answer two chats at the same time (more needs more memory)
+    volumes:
+      - ollama-models:/root/.ollama   # downloaded models survive restarts
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    # With an NVIDIA GPU (and the NVIDIA Container Toolkit), uncomment to make the model much faster:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # Downloads the chat model once (later starts only check it is there), then stops.
+  ollama-pull:
+    image: ollama/ollama:${OLLAMA_VERSION}
+    container_name: grocery-ollama-pull
+    profiles: ["ai"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434   # talk to the "ollama" container instead of starting a server
+    entrypoint: ["ollama", "pull", "${OLLAMA_CHAT_MODEL}"]
+    restart: "no"
+
+  # speaches: the voice of the assistant, locally (docs/ai-assistant-plan.md, "Voice"). Turns a recorded question into
+  # text (Whisper) and an answer into speech (Kokoro), with OpenAI-style endpoints on http://localhost:8000:
+  # POST /v1/audio/transcriptions and POST /v1/audio/speech. mcp-client-service calls them; the audio never leaves
+  # this machine. Runs on the CPU, without a CPU limit: limited to 2 CPUs, speaking an answer took 4 times as long
+  # (300 characters: 22 s instead of 6 s, measured). mcp-client-service runs at most 2 voice jobs at a time.
+  speaches:
+    image: ghcr.io/speaches-ai/speaches:${SPEACHES_VERSION}
+    container_name: grocery-speaches
+    profiles: ["ai"]
+    ports:
+      - "8000:8000"
+    environment:
+      WHISPER__TTL: "-1"              # keep the models in memory (default: unload after 5 idle minutes; reloading takes seconds)
+      WHISPER__COMPUTE_TYPE: int8     # fastest on a CPU
+      ENABLE_UI: "false"              # no web page, only the API
+      LOG_LEVEL: info
+    volumes:
+      - speaches-models:/home/ubuntu/.cache/huggingface/hub   # downloaded models survive restarts
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # Downloads the two voice models once (later starts only check they are there), then stops.
+  speaches-pull:
+    image: ghcr.io/speaches-ai/speaches:${SPEACHES_VERSION}
+    container_name: grocery-speaches-pull
+    profiles: ["ai"]
+    depends_on:
+      speaches:
+        condition: service_healthy
+    entrypoint: ["sh", "-c", "curl -fsS -X POST http://speaches:8000/v1/models/${SPEECH_TRANSCRIPTION_MODEL} && echo && curl -fsS -X POST http://speaches:8000/v1/models/${SPEECH_VOICE_MODEL} && echo"]
+    restart: "no"
+
+volumes:
+  mysql-data:
+  kafka-data:
+  es-data:
+  es-snapshots:     # snapshots of the search indexes (elasticsearch-setup)
+  redis-data:
+  redisinsight-data:
+  prometheus-data:
+  alertmanager-data:
+  grafana-data:
+  loki-data:
+  ollama-models:
+  speaches-models:

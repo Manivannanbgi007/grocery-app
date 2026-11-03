@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Fresh Grocery: fruits, vegetables, dairy and daily essentials from local stores, delivered to your door." />
+    <!-- The browser bar on phones: the brand green (--color-brand in src/styles/index.css; HTML cannot read CSS) -->
+    <meta name="theme-color" content="#09792f" />
+    <title>Fresh Grocery</title>
+    <script>
+      // Sets the saved theme (or the device's) before the page is drawn, so a dark page does not flash white first.
+      // The same rule as src/features/theme (useTheme), which takes over once the app runs.
+      try {
+        var choice = localStorage.getItem('fresh-grocery.theme')
+        var dark = choice === 'dark' || (choice !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)
+        document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+      } catch (error) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,138 @@
+### =====================================================================
+### END-TO-END (Phase 3): vendor and customer onboarding through events
+###
+### Everything goes through the API gateway (port 8080).
+### Needs: infrastructure, auth-service, customer-service, store-service, api-gateway,
+###        and the Debezium connectors (scripts\register-connectors.ps1).
+###
+### Written for the VS Code "REST Client" extension. Run the requests IN ORDER.
+### Steps marked "wait" depend on an event: Kafka delivers it within a second or two.
+###
+### What it shows:
+###   A. vendor3 registers a store -> admin approves it -> StoreApproved event
+###      -> auth-service links the store -> vendor3's NEW token contains storeId
+###   B. a new customer registers -> UserRegistered event
+###      -> customer-service creates the profile -> the customer adds an address
+### =====================================================================
+
+@gatewayUrl = http://localhost:8080
+
+@vendorToken = {{vendorLogin.response.body.$.data.accessToken}}
+@adminToken = {{adminLogin.response.body.$.data.accessToken}}
+@newVendorToken = {{vendorLoginAgain.response.body.$.data.accessToken}}
+@newCustomerToken = {{customerRegistration.response.body.$.data.accessToken}}
+@newStoreId = {{storeRegistration.response.body.$.data.id}}
+
+
+### 1. A. vendor3 logs in - the token has NO storeId yet (data.user.storeId = null)
+# @name vendorLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "vendor3@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 2. A. vendor3 registers a store -> PENDING_APPROVAL (StoreRegistered event)
+# @name storeRegistration
+POST {{gatewayUrl}}/api/v1/vendor/store
+Authorization: Bearer {{vendorToken}}
+Content-Type: application/json
+
+{
+  "name": "Daily Needs Supermarket",
+  "description": "Groceries, dairy and household items",
+  "phone": "9000000010",
+  "addressLine1": "22, 5th Cross, Malleshwaram",
+  "city": "Bengaluru",
+  "state": "Karnataka",
+  "pincode": "560003"
+}
+
+
+### 3. A. Customers cannot see the store yet -> 404
+GET {{gatewayUrl}}/api/v1/stores/{{newStoreId}}
+
+
+### 4. A. The admin logs in
+# @name adminLogin
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 5. A. The admin approves the store -> ACTIVE (StoreApproved event)
+POST {{gatewayUrl}}/api/v1/admin/stores/{{newStoreId}}/approve
+Authorization: Bearer {{adminToken}}
+
+
+### 6. A. (wait a moment) vendor3 logs in again -> data.user.storeId is now the new store id
+# @wait 3
+# @name vendorLoginAgain
+POST {{gatewayUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "vendor3@grocery.com",
+  "password": "Password@123"
+}
+
+
+### 7. A. The store is now visible to everyone, without a token
+GET {{gatewayUrl}}/api/v1/stores/{{newStoreId}}
+
+
+### 8. A. vendor3 manages the store with the new token
+PATCH {{gatewayUrl}}/api/v1/vendor/store/accepting-orders
+Authorization: Bearer {{newVendorToken}}
+Content-Type: application/json
+
+{
+  "acceptingOrders": true
+}
+
+
+### 9. B. A new customer registers (UserRegistered event)
+# @name customerRegistration
+POST {{gatewayUrl}}/api/v1/auth/register
+Content-Type: application/json
+
+{
+  "fullName": "Kavya Nair",
+  "email": "kavya.nair@example.com",
+  "phone": "9123412340",
+  "password": "Password@123",
+  "role": "CUSTOMER"
+}
+
+
+### 10. B. (wait a moment) Her customer profile was created from the event
+# @wait 3
+GET {{gatewayUrl}}/api/v1/customers/me
+Authorization: Bearer {{newCustomerToken}}
+
+
+### 11. B. She adds her first address -> automatically the default
+POST {{gatewayUrl}}/api/v1/customers/me/addresses
+Authorization: Bearer {{newCustomerToken}}
+Content-Type: application/json
+
+{
+  "label": "HOME",
+  "contactName": "Kavya Nair",
+  "contactPhone": "9123412340",
+  "addressLine1": "11, 3rd Main, Malleshwaram",
+  "city": "Bengaluru",
+  "state": "Karnataka",
+  "pincode": "560003"
+}
+
+
+### 12. B. Which stores deliver to her PIN code? (the new store does)
+GET {{gatewayUrl}}/api/v1/stores?pincode=560003

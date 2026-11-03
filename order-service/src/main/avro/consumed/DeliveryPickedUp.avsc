@@ -1,0 +1,40 @@
+{
+  "type": "record",
+  "name": "DeliveryPickedUp",
+  "namespace": "com.grocery.events.delivery",
+  "doc": "The partner collected the order at the store. order-service: OUT_FOR_DELIVERY. Producer: delivery-service. Topic: grocery.delivery.events, key = orderId.",
+  "fields": [
+    {
+      "name": "eventId",
+      "type": "string",
+      "doc": "Unique id of this event (UUID). Consumers use it to skip duplicates."
+    },
+    {
+      "name": "occurredAt",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      }
+    },
+    {
+      "name": "deliveryId",
+      "type": "long"
+    },
+    {
+      "name": "orderId",
+      "type": "long"
+    },
+    {
+      "name": "customerUserId",
+      "type": "long"
+    },
+    {
+      "name": "storeId",
+      "type": "long"
+    },
+    {
+      "name": "partnerUserId",
+      "type": "long"
+    }
+  ]
+}

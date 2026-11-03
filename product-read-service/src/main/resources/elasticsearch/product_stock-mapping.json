@@ -1,0 +1,12 @@
+{
+  "dynamic": "strict",
+  "properties": {
+    "_class": { "type": "keyword", "index": false, "doc_values": false },
+    "id": { "type": "long" },
+    "version": { "type": "long" },
+    "storeId": { "type": "long" },
+    "availableQuantity": { "type": "integer" },
+    "lowStock": { "type": "boolean" },
+    "updatedAt": { "type": "date", "format": "epoch_millis" }
+  }
+}

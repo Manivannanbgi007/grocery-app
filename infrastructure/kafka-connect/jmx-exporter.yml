@@ -1,0 +1,103 @@
+# Prometheus JMX exporter rules for Kafka Connect + Debezium.
+# The agent (see Dockerfile) reads these Java MBeans and shows them as Prometheus metrics on port 9404
+# (Docker network only; Prometheus scrapes kafka-connect:9404). Only the MBeans listed below are exported,
+# plus the JVM's own metrics (memory, GC, threads). Guide: docs/observability.md, "Events and Debezium".
+# docker-compose.yml mounts this file: after a change, restart the container (docker restart grocery-kafka-connect).
+#
+# Pattern format: domain<key=value, key=value><>attribute: value
+# End every pattern with the attribute name and ":" - patterns are not anchored, so "...><>MilliSecondsBehindSource"
+# alone would also match Debezium's MilliSecondsBehindSourceP95, ...MaxValue and so on (one metric, many series).
+lowercaseOutputLabelNames: true
+includeObjectNames:
+  - "debezium.mysql:type=connector-metrics,*"
+  - "kafka.connect:type=connect-worker-metrics,*"
+  - "kafka.connect:type=connector-metrics,*"
+  - "kafka.connect:type=connector-task-metrics,*"
+  - "kafka.connect:type=task-error-metrics,*"
+  - "kafka.connect:type=source-task-metrics,*"
+
+rules:
+  # ---- Debezium: reading the MySQL binlog ("streaming"). server = the connector's topic.prefix (order, payment, ...)
+  - pattern: 'debezium.mysql<type=connector-metrics, context=streaming, server=([^,>]+).*><>Connected:'
+    name: debezium_mysql_connected
+    help: "1 = the connector is connected to the MySQL binlog; 0 = it is not reading, so no events are published"
+    type: GAUGE
+    labels:
+      server: "$1"
+  - pattern: 'debezium.mysql<type=connector-metrics, context=streaming, server=([^,>]+).*><>MilliSecondsBehindSource:'
+    name: debezium_mysql_behind_source_milliseconds
+    help: "Time between a change in MySQL and Debezium reading it (the last event read)"
+    type: GAUGE
+    labels:
+      server: "$1"
+  - pattern: 'debezium.mysql<type=connector-metrics, context=streaming, server=([^,>]+).*><>MilliSecondsSinceLastEvent:'
+    name: debezium_mysql_since_last_event_milliseconds
+    help: "Time since the connector read its last binlog event (grows while the database is idle; heartbeats reset it)"
+    type: GAUGE
+    labels:
+      server: "$1"
+  - pattern: 'debezium.mysql<type=connector-metrics, context=streaming, server=([^,>]+).*><>TotalNumberOfEventsSeen:'
+    name: debezium_mysql_events_seen_total
+    help: "Binlog events read since the connector started"
+    type: COUNTER
+    labels:
+      server: "$1"
+  - pattern: 'debezium.mysql<type=connector-metrics, context=streaming, server=([^,>]+).*><>NumberOfDisconnects:'
+    name: debezium_mysql_disconnects_total
+    help: "How often the connector lost its connection to MySQL since it started"
+    type: COUNTER
+    labels:
+      server: "$1"
+
+  # ---- Kafka Connect: state of every connector and its tasks
+  # Task counts per state (running, failed, paused, unassigned, restarting, destroyed, total): numbers, good for alerts.
+  - pattern: 'kafka.connect<type=connect-worker-metrics, connector=([^>]+)><>connector-([a-z]+)-task-count:'
+    name: kafka_connect_connector_tasks
+    help: "Number of tasks of the connector in each state"
+    type: GAUGE
+    labels:
+      connector: "$1"
+      state: "$2"
+  # The connector's state as text (running, paused, failed, unassigned): 1 for the current state.
+  - pattern: 'kafka.connect<type=connector-metrics, connector=([^>]+)><>status: ([a-z]+)'
+    name: kafka_connect_connector_status
+    help: "1 for the connector's current state"
+    type: GAUGE
+    value: 1
+    labels:
+      connector: "$1"
+      status: "$2"
+  - pattern: 'kafka.connect<type=connector-task-metrics, connector=([^,]+), task=([^>]+)><>status: ([a-z]+)'
+    name: kafka_connect_task_status
+    help: "1 for the task's current state"
+    type: GAUGE
+    value: 1
+    labels:
+      connector: "$1"
+      task: "$2"
+      status: "$3"
+
+  # ---- Errors while a task handles records (converters, transforms such as the outbox EventRouter)
+  - pattern: 'kafka.connect<type=task-error-metrics, connector=([^,]+), task=([^>]+)><>total-record-failures:'
+    name: kafka_connect_task_record_failures_total
+    help: "Record operations that failed (including retries)"
+    type: COUNTER
+    labels:
+      connector: "$1"
+      task: "$2"
+  - pattern: 'kafka.connect<type=task-error-metrics, connector=([^,]+), task=([^>]+)><>total-records-skipped:'
+    name: kafka_connect_task_records_skipped_total
+    help: "Records skipped because of an error (stays 0: errors.tolerance is none, nothing is skipped)"
+    type: COUNTER
+    labels:
+      connector: "$1"
+      task: "$2"
+
+  # ---- Records the connector wrote to Kafka (= events published from the outbox, or catalog changes)
+  - pattern: 'kafka.connect<type=source-task-metrics, connector=([^,]+), task=([^>]+)><>source-record-write-total:'
+    name: kafka_connect_source_records_written_total
+    help: "Records written to Kafka by the connector's task"
+    type: COUNTER
+    labels:
+      connector: "$1"
+      task: "$2"

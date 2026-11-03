@@ -1,0 +1,112 @@
+# Service level objectives (SLOs) of the platform, measured where the users' requests arrive: the API gateway
+# (metric spring_cloud_gateway_requests_seconds, one series per route and status). docs/observability.md, "SLOs".
+#
+#   Availability  99.5 % of the requests are answered without a server error (5xx)       error budget 0.5 %
+#   Latency       99 %   of the requests are answered within 1 second                       error budget 1 %
+#   Period        the last 7 days (Prometheus keeps 7 days here; production: 30 days with a longer retention)
+#
+# Not counted: the Swagger UI routes (*-api-docs). For latency also not: the AI chat and voice (a model answer takes
+# seconds by design) and the live streams, every route named *-stream (delivery tracking, the vendors' orders: they
+# stay open for minutes on purpose).
+#
+# Burn rate = how many times faster than allowed the error budget is used up. 1 = the budget lasts exactly the period.
+# The alerts use two windows each (the "multi-window, multi-burn-rate" alerts of Google's SRE workbook): the long
+# window shows that enough budget is burned to matter, the short one that it is STILL burning (so the alert resolves
+# soon after the problem is fixed).
+#   14.4 x for 1 h (and the last 5 min): 14.4 * 0.5 % = 7.2 % of the requests fail -> critical, act now
+#   6 x    for 6 h (and the last 30 min): 3 % fail                                    -> warning
+# With a 7-day budget, 1 hour at 14.4 x uses 8.6 % of the week's budget, 6 hours at 6 x uses 21 %.
+
+groups:
+  - name: slo-recording
+    interval: 30s
+    rules:
+      # Requests per second, errors (5xx) per second, and the share answered within 1 s, over the windows the alerts
+      # and the dashboard (Grafana: Grocery SLOs) need. ":rate1h" = rate over the last hour, and so on.
+      - record: slo:gateway_requests:rate5m
+        expr: sum(rate(spring_cloud_gateway_requests_seconds_count{routeId!~".*-api-docs"}[5m]))
+      - record: slo:gateway_requests:rate30m
+        expr: sum(rate(spring_cloud_gateway_requests_seconds_count{routeId!~".*-api-docs"}[30m]))
+      - record: slo:gateway_requests:rate1h
+        expr: sum(rate(spring_cloud_gateway_requests_seconds_count{routeId!~".*-api-docs"}[1h]))
+      - record: slo:gateway_requests:rate6h
+        expr: sum(rate(spring_cloud_gateway_requests_seconds_count{routeId!~".*-api-docs"}[6h]))
+
+      # Availability: share of the requests answered with a 5xx (0.01 = 1 %)
+      - record: slo:gateway_error_ratio:rate5m
+        expr: |
+          sum(rate(spring_cloud_gateway_requests_seconds_count{routeId!~".*-api-docs", httpStatusCode=~"5.."}[5m]))
+          / sum(rate(spring_cloud_gateway_requests_seconds_count{routeId!~".*-api-docs"}[5m]))
+      - record: slo:gateway_error_ratio:rate30m
+        expr: |
+          sum(rate(spring_cloud_gateway_requests_seconds_count{routeId!~".*-api-docs", httpStatusCode=~"5.."}[30m]))
+          / sum(rate(spring_cloud_gateway_requests_seconds_count{routeId!~".*-api-docs"}[30m]))
+      - record: slo:gateway_error_ratio:rate1h
+        expr: |
+          sum(rate(spring_cloud_gateway_requests_seconds_count{routeId!~".*-api-docs", httpStatusCode=~"5.."}[1h]))
+          / sum(rate(spring_cloud_gateway_requests_seconds_count{routeId!~".*-api-docs"}[1h]))
+      - record: slo:gateway_error_ratio:rate6h
+        expr: |
+          sum(rate(spring_cloud_gateway_requests_seconds_count{routeId!~".*-api-docs", httpStatusCode=~"5.."}[6h]))
+          / sum(rate(spring_cloud_gateway_requests_seconds_count{routeId!~".*-api-docs"}[6h]))
+      - record: slo:gateway_error_ratio:rate7d
+        expr: |
+          sum(increase(spring_cloud_gateway_requests_seconds_count{routeId!~".*-api-docs", httpStatusCode=~"5.."}[7d]))
+          / sum(increase(spring_cloud_gateway_requests_seconds_count{routeId!~".*-api-docs"}[7d]))
+
+      # Latency: share of the requests that took longer than 1 s (bucket le="1.0", configured in the gateway's
+      # application.yml: management.metrics.distribution.slo). Divided by the le="+Inf" bucket (= all requests), not by
+      # _count: both buckets start at the same moment, while _count may be older (then the share would look too high).
+      - record: slo:gateway_slow_ratio:rate5m
+        expr: |
+          1 - sum(rate(spring_cloud_gateway_requests_seconds_bucket{le="1.0", routeId!~".*-api-docs|mcp-client-service-chat|mcp-client-service-voice|.*-stream"}[5m]))
+            / sum(rate(spring_cloud_gateway_requests_seconds_bucket{le="+Inf", routeId!~".*-api-docs|mcp-client-service-chat|mcp-client-service-voice|.*-stream"}[5m]))
+      - record: slo:gateway_slow_ratio:rate30m
+        expr: |
+          1 - sum(rate(spring_cloud_gateway_requests_seconds_bucket{le="1.0", routeId!~".*-api-docs|mcp-client-service-chat|mcp-client-service-voice|.*-stream"}[30m]))
+            / sum(rate(spring_cloud_gateway_requests_seconds_bucket{le="+Inf", routeId!~".*-api-docs|mcp-client-service-chat|mcp-client-service-voice|.*-stream"}[30m]))
+      - record: slo:gateway_slow_ratio:rate6h
+        expr: |
+          1 - sum(rate(spring_cloud_gateway_requests_seconds_bucket{le="1.0", routeId!~".*-api-docs|mcp-client-service-chat|mcp-client-service-voice|.*-stream"}[6h]))
+            / sum(rate(spring_cloud_gateway_requests_seconds_bucket{le="+Inf", routeId!~".*-api-docs|mcp-client-service-chat|mcp-client-service-voice|.*-stream"}[6h]))
+      - record: slo:gateway_slow_ratio:rate7d
+        expr: |
+          1 - sum(increase(spring_cloud_gateway_requests_seconds_bucket{le="1.0", routeId!~".*-api-docs|mcp-client-service-chat|mcp-client-service-voice|.*-stream"}[7d]))
+            / sum(increase(spring_cloud_gateway_requests_seconds_bucket{le="+Inf", routeId!~".*-api-docs|mcp-client-service-chat|mcp-client-service-voice|.*-stream"}[7d]))
+
+  - name: slo-alerts
+    rules:
+      # "> 1/60": at least one request per minute on average, so that 2 failed requests out of 5 on a quiet evening
+      # do not count as "40 % errors".
+      - alert: ErrorBudgetBurningFast
+        expr: |
+          slo:gateway_error_ratio:rate1h > 14.4 * 0.005
+          and slo:gateway_error_ratio:rate5m > 14.4 * 0.005
+          and slo:gateway_requests:rate1h > 1/60
+        labels:
+          severity: critical
+        annotations:
+          summary: "Users get server errors: more than 7.2 % of the requests in the last hour"
+          description: "More than 7.2 % of the requests through the gateway failed with a 5xx in the last hour and they still fail. At this rate the availability SLO (99.5 % per 7 days) is used up in about half a day. Grafana: Grocery SLOs -> errors by route shows which service; its own alerts (ServiceDown, HighErrorRate ...) say why."
+
+      - alert: ErrorBudgetBurningSlowly
+        expr: |
+          slo:gateway_error_ratio:rate6h > 6 * 0.005
+          and slo:gateway_error_ratio:rate30m > 6 * 0.005
+          and slo:gateway_requests:rate6h > 1/60
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 3 % of the requests failed with a server error in the last 6 hours"
+          description: "More than 3 % of the requests through the gateway failed with a 5xx for 6 hours and they still fail. At this rate the availability SLO (99.5 % per 7 days) is used up in about a day. Grafana: Grocery SLOs -> errors by route."
+
+      - alert: LatencyBudgetBurning
+        expr: |
+          slo:gateway_slow_ratio:rate6h > 6 * 0.01
+          and slo:gateway_slow_ratio:rate30m > 6 * 0.01
+          and slo:gateway_requests:rate6h > 1/60
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 6 % of the requests took longer than 1 s in the last 6 hours"
+          description: "More than 6 % of the requests through the gateway (not counting the AI chat and the live streams) took longer than 1 second for 6 hours, and still do. The latency SLO is 99 % within 1 s per 7 days. Grafana: Grocery SLOs -> slow requests by route, then Grocery service details for that service."
