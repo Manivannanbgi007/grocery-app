@@ -5,12 +5,16 @@ import { useCollapsedMenu } from '../../hooks/useCollapsedMenu'
 import { useDismiss } from '../../hooks/useDismiss'
 import { cn } from '../../utils/cn'
 import { Logo } from '../layout/Logo'
+import { MenuIcon } from '../ui/ToneIcon'
+import type { Tone } from '../ui/tones'
 
 /** One page in a panel's menu. */
 export interface PanelLink {
   to: string
   label: string
   icon: LucideIcon
+  /** the colour of the icon's tile, by what the page is about (the meanings in tones.ts) */
+  tone: Tone
   /** true = only marked as the current page on exactly this address (the dashboard) */
   end?: boolean
   /** work waiting on that page, shown as a red number (left out or 0 = nothing shown) */
@@ -97,7 +101,7 @@ function MenuContent({ name, home, groups, header, onClose, dark = false, collap
               </p>
             )}
             <ul aria-labelledby={group.title ? `${groupId}-${index}` : undefined} className="space-y-1">
-              {group.links.map(({ to, label, icon: Icon, end, count = 0, countLabel }) => (
+              {group.links.map(({ to, label, icon, tone, end, count = 0, countLabel }) => (
                 <li key={to}>
                   <NavLink
                     to={to}
@@ -107,8 +111,8 @@ function MenuContent({ name, home, groups, header, onClose, dark = false, collap
                     {...tipEvents(label)}
                     className={({ isActive }) =>
                       cn(
-                        'group relative flex items-center gap-3 rounded-xl py-2.5 font-heading font-bold whitespace-nowrap transition duration-200',
-                        collapsed ? 'justify-center' : 'px-3',
+                        'group relative flex items-center gap-3 rounded-xl py-1.5 font-heading font-bold whitespace-nowrap transition duration-200',
+                        collapsed ? 'justify-center' : 'px-2',
                         // The current page: a green pill with a soft glow, in every panel; the others slide a little on hover
                         isActive
                           ? 'bg-linear-to-r from-brand to-brand-dark text-white shadow-lg shadow-brand/30'
@@ -118,13 +122,8 @@ function MenuContent({ name, home, groups, header, onClose, dark = false, collap
                   >
                     {({ isActive }) => (
                       <>
-                        <Icon
-                          className={cn(
-                            'size-5 shrink-0',
-                            isActive ? 'text-white' : dark ? 'text-ink-text group-hover:text-white' : 'text-body group-hover:text-brand-text',
-                          )}
-                          aria-hidden="true"
-                        />
+                        {/* Each page's icon in a filled tile of its own colour (see-through white on the current page's pill) */}
+                        <MenuIcon icon={icon} tone={tone} active={isActive} className={collapsed ? 'size-9' : undefined} />
                         {/* Collapsed: the name is only for screen readers (and in the tip) */}
                         <span className={collapsed ? 'sr-only' : 'flex-1'}>{label}</span>
                         {count > 0 && (

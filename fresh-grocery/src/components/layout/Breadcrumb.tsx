@@ -1,5 +1,6 @@
 import { ChevronRight, House } from 'lucide-react'
 import { Link } from 'react-router'
+import { useShopHome } from '../../hooks/useShopHome'
 import { cn } from '../../utils/cn'
 
 /** One step of the path; the last one (the current page) has no link. */
@@ -10,11 +11,12 @@ export interface Crumb {
 
 /** Home › Shop › Tomato */
 export function Breadcrumb({ crumbs, className }: { crumbs: Crumb[]; className?: string }) {
+  const { home } = useShopHome()
   return (
     <nav aria-label="Breadcrumb" className={className}>
       <ol className="flex flex-wrap items-center gap-2 text-sm">
         <li>
-          <Link to="/" className="flex items-center gap-1.5 font-bold text-brand-text hover:underline">
+          <Link to={home} className="flex items-center gap-1.5 font-bold text-brand-text hover:underline">
             <House className="size-4" aria-hidden="true" />
             Home
           </Link>

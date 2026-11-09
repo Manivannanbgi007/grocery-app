@@ -13,9 +13,9 @@ interface VendorTopBarProps {
 }
 
 const PROFILE_ACTIONS: ProfileAction[] = [
-  { to: '/vendor/store', label: 'Store settings', icon: Settings },
-  { to: '/vendor/notifications', label: 'Notifications', icon: Bell },
-  { to: '/', label: 'See the shop', icon: ShoppingBasket },
+  { to: '/vendor/store', label: 'Store settings', icon: Settings, tone: 'orange' },
+  { to: '/vendor/notifications', label: 'Notifications', icon: Bell, tone: 'yellow' },
+  { to: '/', label: 'See the shop', icon: ShoppingBasket, tone: 'green' },
 ]
 
 /** The bar above every vendor page: menu button (phones), "taking new orders", the bell and the vendor's profile card. */

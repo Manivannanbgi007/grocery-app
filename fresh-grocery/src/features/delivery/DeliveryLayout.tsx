@@ -17,9 +17,9 @@ import { RequirePartner } from './RequirePartner'
 import { useAvailability, usePartnerProfile, useStayOnline } from './usePartner'
 
 const PROFILE_ACTIONS: ProfileAction[] = [
-  { to: '/delivery/profile', label: 'My profile', icon: IdCard },
-  { to: '/delivery/earnings', label: 'Earnings', icon: Wallet },
-  { to: '/delivery/notifications', label: 'Notifications', icon: Bell },
+  { to: '/delivery/profile', label: 'My profile', icon: IdCard, tone: 'violet' },
+  { to: '/delivery/earnings', label: 'Earnings', icon: Wallet, tone: 'green' },
+  { to: '/delivery/notifications', label: 'Notifications', icon: Bell, tone: 'yellow' },
 ]
 
 /**

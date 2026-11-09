@@ -67,7 +67,8 @@ test('logging out in one tab logs out the other tabs', async ({ page, context })
   await logInAsPriya(page)
   const otherTab = await context.newPage()
   await skipSalePopup(otherTab)
-  await otherTab.goto('/')
+  // A page for everyone: the customer's home page (/customer/home) would ask the logged-out tab to log in again
+  await otherTab.goto('/shop')
   // The new tab gets the login with the cookie
   await expect(otherTab.getByRole('button', { name: ACCOUNT_BUTTON })).toBeVisible()
 

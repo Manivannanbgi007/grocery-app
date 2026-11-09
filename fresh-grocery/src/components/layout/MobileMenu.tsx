@@ -1,12 +1,14 @@
-import { BriefcaseBusiness, LayoutDashboard, LogIn, LogOut, Mail, MapPin, Package, Phone, User, X } from 'lucide-react'
+import { BriefcaseBusiness, LayoutDashboard, LogIn, Mail, MapPin, Package, Phone, User, X } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { toast } from 'sonner'
-import { PANELS, panelOf, useAuth } from '../../features/auth/authContext'
+import { LOGGING_OUT_STATE, PANELS, panelOf, useAuth } from '../../features/auth/authContext'
 import { useCategories } from '../../hooks/useCategories'
 import { useDismiss } from '../../hooks/useDismiss'
 import { usePlatformSettings } from '../../hooks/usePlatformSettings'
+import { useShopHome } from '../../hooks/useShopHome'
 import { cn } from '../../utils/cn'
+import { LogOutIcon, MenuIcon } from '../ui/ToneIcon'
 import { categoryEmoji } from '../../utils/emoji'
 import { phoneHref } from '../../utils/format'
 import { shopLink } from '../../utils/links'
@@ -26,6 +28,9 @@ export function MobileMenu({ open, onClose }: MobileMenuProps) {
   const { user, logOut } = useAuth()
   const navigate = useNavigate()
   const ownPanel = user ? panelOf(user.role) : null
+  // Home and its sections: /customer/home for a logged-in customer, '/' for everyone else
+  const { homeHref } = useShopHome()
+  const mainLinks = MAIN_LINKS.map((link) => ({ ...link, to: homeHref(link.to) }))
 
   useDismiss(panelRef, open, onClose)
 
@@ -33,7 +38,7 @@ export function MobileMenu({ open, onClose }: MobileMenuProps) {
     onClose()
     // Show the home page first, then log out: on a page that needs a login, its guard would otherwise send the guest
     // to the login page. flushSync: the router puts the new page on screen at once (not later, in a React transition).
-    await navigate('/', { flushSync: true })
+    await navigate('/', { flushSync: true, state: LOGGING_OUT_STATE })
     logOut()
     toast.success('You are logged out. See you soon!')
   }
@@ -49,9 +54,8 @@ export function MobileMenu({ open, onClose }: MobileMenuProps) {
 
   if (!open) return null
 
-  // Every row has an icon in front, so the names line up
-  const linkClass = 'flex items-center gap-3 rounded-md px-3 py-2.5 font-heading font-bold text-heading hover:bg-brand-light hover:text-brand-text'
-  const iconClass = 'size-4 shrink-0 text-brand'
+  // Every row has an icon in front, in a filled tile of its colour (the meanings in tones.ts), so the names line up
+  const linkClass = 'group flex items-center gap-3 rounded-lg px-2 py-1.5 font-heading font-bold text-heading hover:bg-brand-light hover:text-brand-text'
 
   return (
     <div className="fixed inset-0 z-50 lg:hidden">
@@ -67,10 +71,10 @@ export function MobileMenu({ open, onClose }: MobileMenuProps) {
 
         <nav aria-label="Mobile">
           <ul>
-            {MAIN_LINKS.map((link) => (
+            {mainLinks.map((link) => (
               <li key={link.to}>
                 <Link to={link.to} onClick={onClose} className={linkClass}>
-                  <link.icon className={cn(iconClass, link.label === 'Hot Deals' && 'text-hot')} aria-hidden="true" />
+                  <MenuIcon icon={link.icon} tone={link.tone} />
                   {link.label}
                 </Link>
               </li>
@@ -79,19 +83,19 @@ export function MobileMenu({ open, onClose }: MobileMenuProps) {
               <>
                 <li>
                   <Link to="/account" onClick={onClose} className={linkClass}>
-                    <User className={iconClass} aria-hidden="true" />
+                    <MenuIcon icon={User} tone="violet" />
                     My account
                   </Link>
                 </li>
                 <li>
                   <Link to="/orders" onClick={onClose} className={linkClass}>
-                    <Package className={iconClass} aria-hidden="true" />
+                    <MenuIcon icon={Package} tone="green" />
                     My orders
                   </Link>
                 </li>
                 <li>
                   <Link to="/orders/track" onClick={onClose} className={linkClass}>
-                    <MapPin className={iconClass} aria-hidden="true" />
+                    <MenuIcon icon={MapPin} tone="blue" />
                     Track my order
                   </Link>
                 </li>
@@ -100,7 +104,7 @@ export function MobileMenu({ open, onClose }: MobileMenuProps) {
             {ownPanel && ownPanel !== 'CUSTOMER' && (
               <li>
                 <Link to={PANELS[ownPanel].home} onClick={onClose} className={linkClass}>
-                  <LayoutDashboard className={iconClass} aria-hidden="true" />
+                  <MenuIcon icon={LayoutDashboard} tone="teal" />
                   {PANELS[ownPanel].label}
                 </Link>
               </li>
@@ -108,19 +112,19 @@ export function MobileMenu({ open, onClose }: MobileMenuProps) {
             <li>
               {user ? (
                 <button type="button" onClick={handleLogOut} className={cn(linkClass, 'w-full text-left')}>
-                  <LogOut className={iconClass} aria-hidden="true" />
+                  <LogOutIcon />
                   Log out ({user.fullName.split(' ')[0]})
                 </button>
               ) : (
                 <Link to="/login" onClick={onClose} className={linkClass}>
-                  <LogIn className={iconClass} aria-hidden="true" />
+                  <MenuIcon icon={LogIn} tone="violet" />
                   Log in
                 </Link>
               )}
             </li>
             <li>
               <Link to="/register?role=VENDOR" onClick={onClose} className={linkClass}>
-                <BriefcaseBusiness className={iconClass} aria-hidden="true" />
+                <MenuIcon icon={BriefcaseBusiness} tone="orange" />
                 Become Vendor
               </Link>
             </li>

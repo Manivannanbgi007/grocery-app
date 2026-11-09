@@ -1,4 +1,4 @@
-import { CalendarDays, ChevronDown, Clock, LogOut, Mail, Phone, User as UserIcon, type LucideIcon } from 'lucide-react'
+import { CalendarDays, ChevronDown, Clock, Mail, Phone, User as UserIcon, type LucideIcon } from 'lucide-react'
 import { useId, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import type { User } from '../../api/types'
@@ -6,6 +6,8 @@ import { ROLE_NAMES } from '../../features/auth/authContext'
 import { useDismiss } from '../../hooks/useDismiss'
 import { cn } from '../../utils/cn'
 import { formatDate, formatDateTime } from '../../utils/format'
+import { LogOutIcon, MenuIcon } from '../ui/ToneIcon'
+import type { Tone } from '../ui/tones'
 import { Avatar } from './Avatar'
 
 /** A link in the profile card, e.g. "My orders". */
@@ -13,6 +15,8 @@ export interface ProfileAction {
   to: string
   label: string
   icon: LucideIcon
+  /** the colour of the icon's tile: the same as that page's in the menus (the meanings in tones.ts) */
+  tone: Tone
 }
 
 /** One more line of details in the profile card, e.g. the vendor's store. */
@@ -127,10 +131,10 @@ export function ProfileMenu({ user, actions, details = [], onLogOut, variant }: 
 
           {actions.length > 0 && (
             <ul className="p-2">
-              {actions.map(({ to, label, icon: Icon }) => (
+              {actions.map(({ to, label, icon, tone }) => (
                 <li key={to}>
-                  <Link to={to} onClick={() => setOpen(false)} className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-heading hover:bg-brand-light hover:text-brand-text">
-                    <Icon className="size-4 shrink-0" aria-hidden="true" />
+                  <Link to={to} onClick={() => setOpen(false)} className="group flex items-center gap-3 rounded-lg px-2 py-1.5 text-sm text-heading hover:bg-brand-light hover:text-brand-text">
+                    <MenuIcon icon={icon} tone={tone} className="size-7 rounded-md" />
                     {label}
                   </Link>
                 </li>
@@ -145,9 +149,9 @@ export function ProfileMenu({ user, actions, details = [], onLogOut, variant }: 
                 setOpen(false)
                 onLogOut()
               }}
-              className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-bold text-heading hover:bg-hot/10"
+              className="group flex w-full items-center gap-3 rounded-lg px-2 py-1.5 text-sm font-bold text-heading hover:bg-hot/10"
             >
-              <LogOut className="size-4" aria-hidden="true" />
+              <LogOutIcon className="size-7 rounded-md" />
               Log out
             </button>
           </div>

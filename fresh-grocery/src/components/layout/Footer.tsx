@@ -2,6 +2,7 @@ import { Headset, Mail, Phone } from 'lucide-react'
 import { Link } from 'react-router'
 import { useCategories } from '../../hooks/useCategories'
 import { usePlatformSettings } from '../../hooks/usePlatformSettings'
+import { useShopHome } from '../../hooks/useShopHome'
 import { phoneHref } from '../../utils/format'
 import { shopLink } from '../../utils/links'
 import { Logo } from './Logo'
@@ -52,6 +53,8 @@ const CURRENT_YEAR = new Date().getFullYear()
 export function Footer() {
   const { data: settings } = usePlatformSettings()
   const { data: categories = [] } = useCategories()
+  const { homeHref } = useShopHome()
+  const shopLinks = SHOP_LINKS.map((link) => ({ ...link, to: homeHref(link.to) }))
   const categoryLinks = categories.slice(0, 6).map((category) => ({ label: category.name, to: shopLink({ category: category.id }) }))
 
   return (
@@ -80,7 +83,7 @@ export function Footer() {
           )}
         </div>
 
-        <FooterColumn title="Shop" links={SHOP_LINKS} />
+        <FooterColumn title="Shop" links={shopLinks} />
         <FooterColumn title="Account" links={ACCOUNT_LINKS} />
         {categoryLinks.length > 0 && <FooterColumn title="Popular" links={categoryLinks} />}
       </div>

@@ -237,6 +237,21 @@ describe('Session', () => {
     expect(visited).not.toContain('/login')
   })
 
+  it("logs out on the customer's own home page and stays on the shop's home page as a guest", async () => {
+    logInAs()
+    const { user, router } = renderApp('/customer/home')
+    const visited: string[] = []
+    router.subscribe((state) => visited.push(state.location.pathname))
+    await user.click(await screen.findByRole('button', { name: 'Account of Priya Sharma' }))
+    await user.click(screen.getByRole('button', { name: 'Log out' }))
+
+    expect(await screen.findByRole('link', { name: 'Account' })).toHaveAttribute('href', '/login')
+    // '/' would send a logged-in customer on to /customer/home; during the logout it must not
+    expect(router.state.location.pathname).toBe('/')
+    expect(visited).not.toContain('/login')
+    expect(await screen.findByRole('heading', { level: 2, name: 'Deals Of The Day' })).toBeInTheDocument()
+  })
+
   it.each([
     ['vendor1@grocery.com', 'Ravi Kumar', '/vendor/orders?tab=all', '/vendor/login'],
     ['delivery1@grocery.com', 'Arjun Singh', '/delivery/history', '/delivery/login'],
@@ -271,7 +286,8 @@ describe('Session', () => {
 
   it('logs out when the server refuses the refresh (the session ended on the server)', async () => {
     logInAs()
-    renderApp('/')
+    // A page for everyone, so the guest stays on it (the customer's home page, /customer/home, would ask for a login)
+    renderApp('/shop')
     expect(await screen.findByRole('button', { name: 'Account of Priya Sharma' })).toBeInTheDocument()
 
     endMockLogin() // e.g. the password was reset on another device

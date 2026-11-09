@@ -3,7 +3,7 @@ import { MainLayout } from './components/layout/MainLayout'
 import { PageLoading } from './components/layout/PageLoading'
 import { NotFoundPage } from './features/errors/NotFoundPage'
 import { RouteErrorPage } from './features/errors/RouteErrorPage'
-import { HomePage } from './features/home/HomePage'
+import { ShopHomePage } from './features/home/ShopHomePage'
 
 /**
  * Every page of the app. Used by App.tsx (browser router) and by the tests (memory router).
@@ -27,7 +27,8 @@ export const routes: RouteObject[] = [
       {
         errorElement: <RouteErrorPage />,
         children: [
-          { index: true, element: <HomePage /> },
+          // '/' is the shop for guests; a logged-in customer goes on to /customer/home (ShopHomePage)
+          { index: true, element: <ShopHomePage /> },
           { path: 'customer/home', lazy: () => import('./features/home/CustomerHomePage').then((page) => ({ Component: page.CustomerHomePage })) },
           { path: 'shop', lazy: () => import('./features/shop/ShopPage').then((page) => ({ Component: page.ShopPage })) },
           { path: 'products/:productId', lazy: () => import('./features/product/ProductDetailPage').then((page) => ({ Component: page.ProductDetailPage })) },

@@ -29,9 +29,17 @@ export const PANELS: Record<Panel, PanelInfo> = {
 
 /**
  * A logged-in customer's home page: the shop's home page at its own address (routes.tsx). The shop's login goes there
- * when no other page is waiting (?next=). Links to the shop for everyone (PANELS.CUSTOMER.home, the logo) stay '/'.
+ * when no other page is waiting (?next=), '/' sends a logged-in customer on to it (features/home/ShopHomePage.tsx), and
+ * the shop's own links (logo, Home, Hot Deals, breadcrumbs) point a customer straight to it (hooks/useShopHome.ts).
+ * PANELS.CUSTOMER.home stays '/': it is the shop for everyone.
  */
 export const CUSTOMER_HOME = '/customer/home'
+
+/**
+ * Navigation state of a logout: it shows '/' while the customer is still logged in (and logs out right after), so '/'
+ * must not send them on to CUSTOMER_HOME, whose guard would then send the logged-out guest to the login page.
+ */
+export const LOGGING_OUT_STATE = { loggingOut: true } as const
 
 /** The link to the right login when an account belongs to another panel (WrongPanelError). */
 export const LOGIN_LINKS: Record<Panel, string> = {

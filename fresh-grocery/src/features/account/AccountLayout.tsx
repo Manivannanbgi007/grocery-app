@@ -1,4 +1,4 @@
-import { Bell, Heart, LogOut, MapPin, Package, UserRound, type LucideIcon } from 'lucide-react'
+import { Bell, Heart, MapPin, Package, UserRound, type LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { NavLink, useNavigate } from 'react-router'
 import { toast } from 'sonner'
@@ -6,11 +6,12 @@ import { BreadcrumbBar, type Crumb } from '../../components/layout/Breadcrumb'
 import { PageTitle } from '../../components/layout/PageTitle'
 import { PanelHero } from '../../components/panel/PanelHero'
 import { Appear } from '../../components/ui/Appear'
-import { TONES, type Tone } from '../../components/ui/tones'
+import { LogOutIcon, MenuIcon } from '../../components/ui/ToneIcon'
+import type { Tone } from '../../components/ui/tones'
 import { cn } from '../../utils/cn'
-import { useAuth } from '../auth/authContext'
+import { LOGGING_OUT_STATE, useAuth } from '../auth/authContext'
 
-/** The account's pages; `tone` is only the colour of the link's icon chip (the colours of tones.ts) */
+/** The account's pages; `tone` is only the colour of the link's icon tile (the colours of tones.ts) */
 const LINKS: { to: string; label: string; icon: LucideIcon; tone: Tone }[] = [
   { to: '/account', label: 'Profile and password', icon: UserRound, tone: 'violet' },
   { to: '/account/addresses', label: 'Addresses', icon: MapPin, tone: 'blue' },
@@ -23,12 +24,12 @@ const LINKS: { to: string; label: string; icon: LucideIcon; tone: Tone }[] = [
 function AccountNav() {
   const { logOut } = useAuth()
   const navigate = useNavigate()
-  const item = 'flex w-full items-center gap-3 rounded-xl px-4 py-3 font-heading font-bold transition duration-200'
+  const item = 'group flex w-full items-center gap-3 rounded-xl px-4 py-3 font-heading font-bold transition duration-200'
 
   async function handleLogOut() {
     // Show the home page first, then log out: on a page that needs a login, its guard would otherwise send the guest
     // to the login page. flushSync: the router puts the new page on screen at once (not later, in a React transition).
-    await navigate('/', { flushSync: true })
+    await navigate('/', { flushSync: true, state: LOGGING_OUT_STATE })
     logOut()
     toast.success('You are logged out. See you soon!')
   }
@@ -36,7 +37,7 @@ function AccountNav() {
   return (
     <nav aria-label="My account" className="rounded-3xl border border-line bg-card p-3">
       <ul className="space-y-1">
-        {LINKS.map(({ to, label, icon: Icon, tone }) => (
+        {LINKS.map(({ to, label, icon, tone }) => (
           <li key={to}>
             {/* end: "/account" is only active on that page, not on "/account/addresses" */}
             {/* The current page: the green pill of every panel's menu; the others slide a little on hover */}
@@ -47,12 +48,10 @@ function AccountNav() {
                 cn(item, isActive ? 'bg-linear-to-r from-brand to-brand-dark text-white shadow-lg shadow-brand/30' : 'text-heading hover:translate-x-1 hover:bg-brand-light hover:text-brand-text')
               }
             >
-              {/* Each page's icon in a chip of its own colour (on the green pill of the current page: a light see-through chip) */}
+              {/* Each page's icon in a filled tile of its own colour (on the green pill of the current page: see-through white) */}
               {({ isActive }) => (
                 <>
-                  <span aria-hidden="true" className={cn('grid size-8 shrink-0 place-items-center rounded-lg transition-colors', isActive ? 'bg-white/20' : TONES[tone].soft)}>
-                    <Icon className="size-4.5" />
-                  </span>
+                  <MenuIcon icon={icon} tone={tone} active={isActive} />
                   {label}
                 </>
               )}
@@ -61,9 +60,7 @@ function AccountNav() {
         ))}
         <li className="border-t border-line pt-1">
           <button type="button" onClick={handleLogOut} className={cn(item, 'text-heading hover:bg-hot/10 hover:text-hot-text')}>
-            <span aria-hidden="true" className="grid size-8 shrink-0 place-items-center rounded-lg bg-surface">
-              <LogOut className="size-4.5" />
-            </span>
+            <LogOutIcon />
             Log out
           </button>
         </li>

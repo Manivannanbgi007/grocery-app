@@ -82,11 +82,22 @@
   --color-violet-light: #f1ebff;
   --color-violet-text: #6d28d9;
 
+  /* Teal: the platform itself (dashboards, delivery zones, settings, system health), one of the menu icon colours
+     (components/ui/tones.ts), with its light background and a teal readable on it (5.5:1) */
+  --color-teal: #14b8a6;
+  --color-teal-light: #e3f8f5;
+  --color-teal-text: #0f766e;
+
   /* A deep blue and a deep violet that stay the same in the dark theme (sale-text and violet-text turn light there):
      the ends of colourful gradients with white text or icons on them (the AI chat, the page headers, "Thank you for
      your order!"), so the white stays readable in both themes */
   --color-deep-blue: #1d6b9c;
   --color-deep-violet: #6d28d9;
+  /* The same for pink (hot-text turns light there): the "20% OFF" sticker of Deals of the Day, white text 5.9:1 */
+  --color-deep-pink: #c2185b;
+  /* ... and for orange and teal: the ends of the menus' icon tiles (TONES[…].tile), white icons 5.2:1 and 5.5:1 */
+  --color-deep-orange: #c2410c;
+  --color-deep-teal: #0f766e;
 
   /* The dark surfaces of the admin panel: its menu, its login screen and the dashboard's welcome banner */
   --color-ink: #16252f;
@@ -463,6 +474,8 @@ html:has(#shop-header) {
     --color-sale-text: #7cc6f2;
     --color-violet-light: #261c3d;
     --color-violet-text: #c4b5fd;
+    --color-teal-light: #0f2b28;
+    --color-teal-text: #5eead4;
 
     --color-ink: #0a1012;
     --color-ink-soft: #1c2b33;

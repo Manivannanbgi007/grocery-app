@@ -2,6 +2,7 @@ import { Headset } from 'lucide-react'
 import { Link, NavLink, useLocation } from 'react-router'
 import { CUSTOMER_HOME } from '../../features/auth/authContext'
 import { usePlatformSettings } from '../../hooks/usePlatformSettings'
+import { useShopHome } from '../../hooks/useShopHome'
 import { cn } from '../../utils/cn'
 import { phoneHref } from '../../utils/format'
 import { CategoryMenu } from './CategoryMenu'
@@ -31,6 +32,9 @@ function PillContent({ link, current }: { link: MainLink; current: boolean }) {
 export function NavBar() {
   const { data: settings } = usePlatformSettings()
   const { pathname } = useLocation()
+  // Home and its sections: /customer/home for a logged-in customer, '/' for everyone else
+  const { homeHref } = useShopHome()
+  const links = MAIN_LINKS.map((link) => ({ ...link, to: homeHref(link.to) }))
   // "Home" is also current on a logged-in customer's own home page (CUSTOMER_HOME): it is the same page
   const isCurrent = (link: MainLink, isActive: boolean) => isActive || (link.to === '/' && pathname === CUSTOMER_HOME)
 
@@ -41,7 +45,7 @@ export function NavBar() {
 
         {/* The links sit in one light track, so the menu reads as one control */}
         <nav aria-label="Main" className="flex items-center gap-1 rounded-full border border-line bg-surface p-1">
-          {MAIN_LINKS.map((link) =>
+          {links.map((link) =>
             // Links to a section of the home page ("/#deals") are never "current", so they use a plain Link
             link.to.includes('#') ? (
               <Link key={link.to} to={link.to} className={pillClass(false)}>

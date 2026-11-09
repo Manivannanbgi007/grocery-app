@@ -54,6 +54,7 @@ const BARS: Record<Tone, string> = {
   violet: 'from-violet/50 to-violet',
   pink: 'from-hot/50 to-hot',
   yellow: 'from-accent/50 to-accent',
+  teal: 'from-teal/50 to-teal',
 }
 
 function RankBadge({ rank }: { rank: number }) {

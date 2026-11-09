@@ -1,4 +1,5 @@
 import { Link } from 'react-router'
+import { useShopHome } from '../../hooks/useShopHome'
 import { cn } from '../../utils/cn'
 
 /** The leaf mark, in the theme's green (same drawing as public/favicon.svg, which has the colour written in). */
@@ -26,9 +27,11 @@ interface LogoProps {
 }
 
 /** "Fresh GROCERY" with the leaf mark; links to the home page. */
-export function Logo({ className, to = '/', label = 'Fresh Grocery, home', onDark = false, compact = false, wordmarkClassName }: LogoProps) {
+export function Logo({ className, to, label = 'Fresh Grocery, home', onDark = false, compact = false, wordmarkClassName }: LogoProps) {
+  // Without `to`: the shop's home page for this visitor (/customer/home for a logged-in customer)
+  const { home } = useShopHome()
   return (
-    <Link to={to} className={cn('flex shrink-0 items-center gap-2', className)} aria-label={label}>
+    <Link to={to ?? home} className={cn('flex shrink-0 items-center gap-2', className)} aria-label={label}>
       <LeafMark className={compact ? 'size-10' : 'size-10 lg:size-12'} />
       {!compact && (
         <span className={cn('flex flex-col leading-none', wordmarkClassName)}>

@@ -14,6 +14,7 @@ const LOOKS: Record<Tone, { icon: string; wash: string; glows: [string, string] 
   violet: { icon: 'from-violet to-deep-blue shadow-violet/30', wash: 'from-violet-light via-card to-sale-light', glows: ['bg-glow-4', 'bg-glow-2'] },
   pink: { icon: 'from-hot to-violet shadow-hot/30', wash: 'from-hot/10 via-card to-violet-light', glows: ['bg-glow-4', 'bg-glow-3'] },
   yellow: { icon: 'from-accent to-new shadow-accent/30', wash: 'from-warn-light via-card to-new-light', glows: ['bg-glow-3', 'bg-glow-1'] },
+  teal: { icon: 'from-teal to-deep-blue shadow-teal/30', wash: 'from-teal-light via-card to-sale-light', glows: ['bg-glow-1', 'bg-glow-2'] },
 }
 
 interface PageHeroProps {

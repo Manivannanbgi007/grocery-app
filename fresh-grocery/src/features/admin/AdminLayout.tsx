@@ -22,8 +22,8 @@ function AdminFrame() {
   const { admin } = useAuth()
   const [menuOpen, setMenuOpen] = useState(false)
   const profileActions: ProfileAction[] = [
-    ...(admin ? [{ to: `/admin/accounts/${admin.id}`, label: 'My account details', icon: UserRound }] : []),
-    { to: '/', label: 'See the shop', icon: ShoppingBasket },
+    ...(admin ? [{ to: `/admin/accounts/${admin.id}`, label: 'My account details', icon: UserRound, tone: 'violet' as const }] : []),
+    { to: '/', label: 'See the shop', icon: ShoppingBasket, tone: 'green' },
   ]
 
   return (
