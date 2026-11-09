@@ -1,0 +1,618 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Grocery Booking Flow</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=Kalam:wght@400;700&display=swap">
+<style>
+/* Layout: a sketched swimlane sheet (phase gutter + 5 service lanes + a COD shortcut rail), sticky lane header, path filter above, status key below */
+:root {
+  --paper: #F5F8F6;
+  --grid: #D9E2DD;
+  --wash: #E6EEEA;
+  --ink: #1D2A28;
+  --ink-soft: #5A6964;
+  --cust: #237A42;  --cust-fill: #B9E2C6;
+  --cart: #B64F1C;  --cart-fill: #F7CFB4;
+  --order: #2D69AE; --order-fill: #C6D9F1;
+  --inv: #8C6608;   --inv-fill: #F1DE9C;
+  --pay: #7647BF;   --pay-fill: #DACBF2;
+  --fail: #C0393B;  --fail-fill: #F4C6C6;
+  --note: #FFF0A0;  --note-edge: #C9B44A;
+  --lane-alpha: 0.2;
+  --font-hand: "Caveat", "Segoe Print", "Bradley Hand", cursive;
+  --font-body: "Kalam", "Segoe Print", "Bradley Hand", cursive;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #162120; --grid: #24332F; --wash: #213029;
+    --ink: #E3ECE8; --ink-soft: #9FB2AB;
+    --cust: #6CCB8C;  --cust-fill: #2B6A43;
+    --cart: #F09763;  --cart-fill: #7A4220;
+    --order: #80AFEA; --order-fill: #2A4F80;
+    --inv: #E2BF55;   --inv-fill: #6B5716;
+    --pay: #B79AF0;   --pay-fill: #523A86;
+    --fail: #F08585;  --fail-fill: #7A2E30;
+    --note: #45401D;  --note-edge: #8F8340;
+    --lane-alpha: 0.14;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #162120; --grid: #24332F; --wash: #213029;
+  --ink: #E3ECE8; --ink-soft: #9FB2AB;
+  --cust: #6CCB8C;  --cust-fill: #2B6A43;
+  --cart: #F09763;  --cart-fill: #7A4220;
+  --order: #80AFEA; --order-fill: #2A4F80;
+  --inv: #E2BF55;   --inv-fill: #6B5716;
+  --pay: #B79AF0;   --pay-fill: #523A86;
+  --fail: #F08585;  --fail-fill: #7A2E30;
+  --note: #45401D;  --note-edge: #8F8340;
+  --lane-alpha: 0.14;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background-color: var(--paper);
+  background-image: radial-gradient(circle, var(--grid) 1.1px, transparent 1.5px);
+  background-size: 24px 24px;
+  color: var(--ink);
+  font-family: var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 56px;
+}
+body::before {
+  content: ""; position: fixed; inset: 0 0 auto;
+  height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--paper);
+}
+
+.top, .hint, .scroller, .key, .source { max-width: 1366px; margin-inline: auto; }
+.top { display: grid; gap: 12px; margin-bottom: 14px; }
+.eyebrow {
+  margin: 0; font-size: 13px; font-weight: 700; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--cust);
+}
+h1 {
+  margin: 0; font-family: var(--font-hand); font-weight: 700;
+  font-size: clamp(48px, 7vw, 78px); line-height: 0.95; text-wrap: balance;
+}
+.lede { margin: 0; max-width: 64ch; font-size: 16.5px; line-height: 1.6; color: var(--ink-soft); }
+
+.toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 14px 28px; margin-top: 8px;
+}
+.paths { display: flex; flex-wrap: wrap; gap: 10px; }
+.paths button {
+  font: 700 15px/1 var(--font-body);
+  color: var(--ink); background: transparent;
+  border: 2px solid var(--ink);
+  border-radius: 255px 18px 225px 18px / 18px 225px 18px 255px;
+  padding: 10px 16px 7px; cursor: pointer;
+}
+.paths button:hover { background: var(--wash); }
+.paths button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+.paths button:focus-visible { outline: 2.5px dashed var(--order); outline-offset: 3px; }
+
+.legend {
+  display: flex; flex-wrap: wrap; gap: 6px 18px; list-style: none; margin: 0; padding: 0;
+  font-size: 14px; color: var(--ink-soft);
+}
+.legend li { display: flex; align-items: center; gap: 7px; }
+.legend svg { width: 40px; height: 26px; flex: none; overflow: visible; }
+
+.caption { margin: 2px 0 0; max-width: 80ch; min-height: 3.2em; font-size: 15.5px; line-height: 1.6; }
+.caption strong { font-weight: 700; }
+
+.hint { display: none; margin-block: 0 8px; font-size: 14px; color: var(--ink-soft); }
+.sheet svg { display: block; width: 100%; height: auto; overflow: visible; }
+.lanebar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--paper); }
+@media (max-width: 1099px) {
+  .scroller { overflow-x: auto; }
+  .sheet { width: 1100px; }
+  .lanebar { position: static; }
+  .hint { display: block; }
+}
+
+/* Diagram drawing */
+svg path { stroke-linecap: round; stroke-linejoin: round; }
+svg text { font-family: var(--font-body); fill: var(--ink); }
+.halo { paint-order: stroke; stroke: var(--paper); stroke-width: 4px; stroke-linejoin: round; }
+.nt { font-size: 13.5px; }
+.nt .b { font-size: 15px; font-weight: 700; }
+.nn { font-family: var(--font-hand); font-weight: 600; font-size: 18.5px; }
+.evn { font-size: 14.5px; font-weight: 700; }
+.lbl.ev { font-size: 13.5px; font-weight: 700; }
+.lbl.yn { font-family: var(--font-hand); font-weight: 700; font-size: 19px; fill: var(--ink-soft); }
+.lbl.tx { font-family: var(--font-hand); font-weight: 600; font-size: 17.5px; fill: var(--ink-soft); }
+.ph-n { font-family: var(--font-hand); font-weight: 700; font-size: 22px; }
+.ph-t { font-family: var(--font-hand); font-weight: 700; font-size: 23px; fill: var(--ink-soft); }
+.lane-t { font-family: var(--font-hand); font-weight: 700; font-size: 28px; }
+.lane-s { font-size: 12.5px; fill: var(--ink-soft); }
+.strip-t { font-family: var(--font-hand); font-weight: 700; font-size: 32px; }
+.strip-s { font-size: 14px; fill: var(--ink-soft); }
+.lanebg { fill-opacity: var(--lane-alpha); }
+
+.el { transition: opacity 0.25s ease; }
+#flow[data-path="c"] .el:not(.p-c),
+#flow[data-path="o"] .el:not(.p-o),
+#flow[data-path="f"] .el:not(.p-f) { opacity: 0.13; }
+@media (prefers-reduced-motion: reduce) { .el { transition: none; } }
+
+/* Status key */
+.key { display: grid; gap: 18px; margin-top: 34px; }
+.key h2 { margin: 0; font-family: var(--font-hand); font-weight: 700; font-size: 36px; line-height: 1; }
+.track { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 8px 18px; align-items: start; }
+.track h3 { margin: 0; padding-top: 5px; font-size: 16px; font-weight: 700; line-height: 1.4; }
+.chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 4px; list-style: none; margin: 0; padding: 0; }
+.chips li { display: flex; align-items: center; gap: 4px; }
+.chips li + li::before {
+  content: "\2192"; margin-right: 4px; color: var(--ink-soft);
+  font-family: var(--font-hand); font-size: 22px; line-height: 1;
+}
+.chip {
+  display: inline-block; padding: 7px 10px 5px;
+  font-size: 12.5px; font-weight: 700; letter-spacing: 0.03em; line-height: 1;
+  border: 1.7px solid currentColor;
+  border-radius: 255px 15px 225px 15px / 15px 225px 15px 255px;
+}
+.chip.o { color: var(--order); }
+.chip.p { color: var(--pay); }
+.chip.c { color: var(--cust); }
+.chip.f { color: var(--fail); }
+.ends { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 10px 0 0; font-size: 14.5px; color: var(--ink-soft); }
+@media (max-width: 700px) { .track { grid-template-columns: minmax(0, 1fr); } }
+
+.source { margin-top: 30px; max-width: 90ch; font-size: 13.5px; line-height: 1.6; color: var(--ink-soft); }
+.source code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12.5px; }
+</style>
+
+<header class="top">
+  <p class="eyebrow">Fresh Grocery · how an order gets booked</p>
+  <h1>Grocery Booking Flow</h1>
+  <p class="lede">One order, from the moment a customer starts shopping to a confirmed booking with an approved payment. Each lane is one part of the system. Arrows show what happens next, and the pills are the events the services send each other.</p>
+  <div class="toolbar">
+    <div class="paths" role="group" aria-label="Highlight one path">
+      <button type="button" id="path-all" data-path="all" aria-pressed="true">Whole flow</button>
+      <button type="button" id="path-c" data-path="c" aria-pressed="false">Cash on delivery</button>
+      <button type="button" id="path-o" data-path="o" aria-pressed="false">Online payment</button>
+      <button type="button" id="path-f" data-path="f" aria-pressed="false">When it goes wrong</button>
+    </div>
+    <ul class="legend" aria-label="Legend">
+      <li><svg data-shape="start" viewBox="0 0 40 26" aria-hidden="true"></svg>Start or end</li>
+      <li><svg data-shape="step" viewBox="0 0 40 26" aria-hidden="true"></svg>Step</li>
+      <li><svg data-shape="decision" viewBox="0 0 40 26" aria-hidden="true"></svg>Decision</li>
+      <li><svg data-shape="event" viewBox="0 0 40 26" aria-hidden="true"></svg>Event between services</li>
+      <li><svg data-shape="fail" viewBox="0 0 40 26" aria-hidden="true"></svg>Stopped or undone</li>
+      <li><svg data-shape="note" viewBox="0 0 40 26" aria-hidden="true"></svg>Note</li>
+    </ul>
+  </div>
+  <p class="caption" id="caption" aria-live="polite"></p>
+</header>
+
+<p class="hint">Scroll sideways to follow a lane.</p>
+<div class="scroller">
+  <div class="sheet">
+    <svg id="lanebar" class="lanebar" viewBox="0 0 1366 78" aria-hidden="true"></svg>
+    <svg id="flow" viewBox="0 100 1366 3330" role="img" aria-labelledby="flow-title flow-desc">
+      <title id="flow-title">Grocery booking flow</title>
+      <desc id="flow-desc">The customer browses, adds items to a one-store cart, applies a coupon and checks out with cash on delivery or online payment. The order service checks the address, the store and duplicates, saves the order as PENDING and sends OrderCreated. Inventory reserves the stock; if any item is short the order is cancelled. The payment service then confirms cash on delivery at once, or opens a Razorpay payment that the customer must pay within 15 minutes; a verified payment sends PaymentConfirmed and the order becomes CONFIRMED, a declined or late one cancels the order, releases the stock and frees the coupon. After confirmation the store accepts, packs and hands the order to a delivery partner.</desc>
+    </svg>
+  </div>
+</div>
+
+<section class="key" aria-labelledby="key-title">
+  <h2 id="key-title">Status names along the way</h2>
+  <div class="track">
+    <h3>Order</h3>
+    <div>
+      <ol class="chips">
+        <li><span class="chip o">PENDING</span></li>
+        <li><span class="chip o">CONFIRMED</span></li>
+        <li><span class="chip o">ACCEPTED</span></li>
+        <li><span class="chip o">PACKED</span></li>
+        <li><span class="chip o">READY_FOR_PICKUP</span></li>
+        <li><span class="chip o">OUT_FOR_DELIVERY</span></li>
+        <li><span class="chip o">DELIVERED</span></li>
+      </ol>
+      <p class="ends">Can also end as <span class="chip f">CANCELLED</span> <span class="chip f">REJECTED</span> <span class="chip f">DELIVERY_FAILED</span> Cancelling is possible until the partner picks the order up.</p>
+    </div>
+  </div>
+  <div class="track">
+    <h3>Payment, online</h3>
+    <div>
+      <ol class="chips">
+        <li><span class="chip p">PENDING</span></li>
+        <li><span class="chip p">AWAITING_PAYMENT</span></li>
+        <li><span class="chip p">PAID</span></li>
+      </ol>
+      <p class="ends"><span class="chip f">FAILED</span> declined, or not paid within 15 minutes. <span class="chip f">REFUNDED</span> paid, then cancelled, rejected or not delivered.</p>
+    </div>
+  </div>
+  <div class="track">
+    <h3>Payment, cash on delivery</h3>
+    <div>
+      <ol class="chips">
+        <li><span class="chip c">PENDING</span></li>
+        <li><span class="chip c">CASH_ON_DELIVERY</span></li>
+        <li><span class="chip c">COLLECTED</span></li>
+      </ol>
+      <p class="ends"><span class="chip f">CANCELLED</span> the order ended before the cash was collected.</p>
+    </div>
+  </div>
+</section>
+
+<p class="source">Drawn from this repository: <code>OrderStatus</code> (order-service), <code>PaymentStatus</code> (payment-service), the order saga in <code>docs/event-catalog.md</code>, and the cart-service, order-service and payment-service READMEs. Amounts are the platform defaults: ₹30 delivery fee, free from ₹299, minimum order ₹99.</p>
+
+<script src="https://cdn.jsdelivr.net/npm/roughjs@4.6.6/bundled/rough.js"></script>
+<script>
+(function () {
+  var caption = document.getElementById('caption');
+  if (!window.rough) {
+    caption.textContent = 'The drawing library (Rough.js) did not load, so the diagram cannot be drawn. Reload the page to try again.';
+    return;
+  }
+
+  var NS = 'http://www.w3.org/2000/svg';
+  var gen = rough.generator();
+  var s = 20261108;
+  function seed() { s = (s * 48271) % 2147483647; return (s % 100000) + 1; }
+  function O(o) {
+    return Object.assign({ roughness: 1.05, bowing: 0.9, strokeWidth: 1.6, hachureGap: 5.5, fillWeight: 1.1, seed: seed() }, o);
+  }
+  function mk(tag, attrs, parent) {
+    var e = document.createElementNS(NS, tag);
+    for (var k in attrs) if (attrs[k] != null) e.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+  /* Rough draws to path data; colours stay CSS variables so both themes work without redrawing. */
+  function paint(drawable, parent, dash) {
+    var g = mk('g', {}, parent);
+    var outline = drawable.options.stroke;
+    gen.toPaths(drawable).forEach(function (p) {
+      var e = mk('path', { d: p.d }, g);
+      e.style.stroke = p.stroke;
+      e.style.strokeWidth = p.strokeWidth;
+      e.style.fill = p.fill || 'none';
+      if (dash && p.stroke === outline && (!p.fill || p.fill === 'none')) e.style.strokeDasharray = dash;
+    });
+    return g;
+  }
+  function pillPath(x, y, w, h) {
+    var r = h / 2;
+    return 'M' + (x + r) + ',' + y + ' H' + (x + w - r) + ' A' + r + ',' + r + ' 0 0 1 ' + (x + w - r) + ',' + (y + h) +
+      ' H' + (x + r) + ' A' + r + ',' + r + ' 0 0 1 ' + (x + r) + ',' + y + ' Z';
+  }
+
+  /* ---------- geometry ---------- */
+  var X0 = 60, LW = 250, NW = 210, LANE_TOP = 110, LANE_END = 3080;
+  var LANES = [
+    { key: 'cust', name: 'Customer', sub: 'Fresh Grocery shop' },
+    { key: 'cart', name: 'Cart', sub: 'cart-service' },
+    { key: 'order', name: 'Order', sub: 'order-service' },
+    { key: 'inv', name: 'Inventory', sub: 'inventory-service' },
+    { key: 'pay', name: 'Payment', sub: 'payment-service + Razorpay' }
+  ];
+  function lx(i) { return X0 + LW * i + LW / 2; }
+  var PHASES = [
+    { y: 110, n: 1, t: 'Browse & choose' },
+    { y: 500, n: 2, t: 'Build the cart' },
+    { y: 1120, n: 3, t: 'Check out' },
+    { y: 1480, n: 4, t: 'Place the order' },
+    { y: 2000, n: 5, t: 'Reserve stock' },
+    { y: 2350, n: 6, t: 'Approve payment' },
+    { y: 2925, n: 7, t: 'Confirm' }
+  ];
+
+  /* ---------- nodes ---------- */
+  var N = {};
+  function node(id, lane, cy, type, lines, o) {
+    o = o || {};
+    var n = lines.length;
+    var w = o.w || (type === 'event' ? 170 : NW);
+    var h = o.h || (type === 'decision' ? 110 : type === 'event' ? 36 : type === 'note' ? 22 + 20 * n : 24 + 19 * n);
+    N[id] = {
+      id: id, lane: lane, cx: o.cx != null ? o.cx : lx(lane), cy: cy, type: type, lines: lines, w: w, h: h,
+      p: o.p != null ? o.p : 'co', strong: !!o.strong, solid: !!o.solid, color: o.color || (LANES[lane] && LANES[lane].key)
+    };
+  }
+  function anchor(id, side) {
+    var n = N[id];
+    if (side === 'l') return [n.cx - n.w / 2, n.cy];
+    if (side === 'r') return [n.cx + n.w / 2, n.cy];
+    if (side === 't') return [n.cx, n.cy - n.h / 2];
+    return [n.cx, n.cy + n.h / 2];
+  }
+
+  // 1 Browse & choose
+  node('start', 0, 190, 'start', ['Customer opens', 'Fresh Grocery'], { w: 200, h: 72 });
+  node('browse', 0, 285, 'step', ['Search or browse', 'by category, store, offer']);
+  node('pick', 0, 378, 'step', ['Open a product,', 'choose the quantity']);
+  node('add', 0, 462, 'step', ['Add to cart']);
+  node('noteSearch', 1, 240, 'note', ['Search reads the', 'Elasticsearch index:', 'price, offer, in stock'], { w: 190, p: '' });
+  node('noteAi', 1, 382, 'note', ['Or ask the assistant:', '“add 2 kg of tomatoes”.', 'The cart changes only', 'when you press Confirm'], { w: 200, p: '' });
+  // 2 Build the cart
+  node('check', 1, 580, 'step', ['Check the product:', 'active and in stock']);
+  node('same', 1, 700, 'decision', ['Same store', 'as the cart?'], { p: 'cof' });
+  node('replace', 0, 700, 'step', ['Other store: replace', 'the cart or keep it'], { p: 'f' });
+  node('saved', 1, 815, 'step', ['Item saved in the cart', '1–20 units, ≤ 50 products']);
+  node('review', 0, 815, 'step', ['Review the cart:', 'quantities, coupon']);
+  node('coupon', 1, 935, 'step', ['Check the coupon:', 'dates, store, min order,', 'usage limits']);
+  node('totals', 1, 1050, 'step', ['Show the totals:', 'items − coupon + ₹30 fee', '(free delivery from ₹299)']);
+  // 3 Check out
+  node('checkout', 0, 1210, 'step', ['Go to checkout:', 'address, COD or online,', 'note for the store']);
+  node('summary', 1, 1210, 'step', ['Checkout summary:', 'today’s prices, problems']);
+  node('ready', 1, 1330, 'decision', ['Ready to', 'order?'], { p: 'cof' });
+  node('problems', 0, 1330, 'fail', ['Fix the problems:', 'min ₹99, stock, coupon'], { p: 'f' });
+  node('place', 0, 1430, 'step', ['Place order'], { solid: true, strong: true });
+  // 4 Place the order
+  node('post', 2, 1560, 'step', ['Receive the order', 'POST /api/v1/orders']);
+  node('checks', 2, 1680, 'step', ['Check before saving:', 'address is the customer’s', 'store open, delivers to PIN', 'not placed twice (2 min)'], { w: 222 });
+  node('noteChecks', 3, 1680, 'note', ['Asks customer-service,', 'store-service and', 'cart-service first'], { w: 190, p: '' });
+  node('checksOk', 2, 1805, 'decision', ['All checks', 'pass?'], { p: 'cof' });
+  node('refused', 1, 1805, 'fail', ['Order refused', '409 with every reason'], { p: 'f' });
+  node('pending', 2, 1925, 'step', ['Save order PENDING', 'and its OrderCreated', 'event, one transaction'], { strong: true });
+  node('orderPage', 0, 1925, 'step', ['Order page opens', 'status PENDING']);
+  // 5 Reserve stock
+  node('created', 2, 2065, 'event', ['OrderCreated'], { w: 160 });
+  node('cartClean', 1, 2160, 'step', ['Remove ordered items,', 'count the coupon use']);
+  node('enough', 3, 2165, 'decision', ['Enough stock', 'for every item?'], { p: 'cof' });
+  node('stockFail', 2, 2165, 'fail', ['Order CANCELLED', 'StockReservationFailed:', 'nothing was reserved'], { p: 'f' });
+  node('payPending', 4, 2165, 'step', ['Create the payment', 'status PENDING']);
+  node('reserved', 3, 2290, 'step', ['Reserve the items', 'status RESERVED']);
+  // 6 Approve payment
+  node('method', 4, 2440, 'decision', ['Cash on delivery', 'or online?']);
+  node('awaiting', 4, 2570, 'step', ['Open a gateway order', 'AWAITING_PAYMENT,', 'pay within 15 minutes'], { p: 'o' });
+  node('pay', 0, 2570, 'step', ['Pay on the order page', 'Razorpay Checkout:', 'UPI, card, net banking'], { p: 'o', strong: true });
+  node('noteRetry', 1, 2640, 'note', ['A failed try keeps the', 'payment open: try again'], { w: 200, p: '' });
+  node('verify', 4, 2705, 'step', ['Verify the payment:', 'signature and amount,', 'or Razorpay webhook'], { p: 'o' });
+  node('paid', 4, 2840, 'decision', ['Paid within', '15 minutes?'], { p: 'of' });
+  node('cancelPay', 2, 2840, 'fail', ['Order CANCELLED', 'stock released,', 'coupon freed'], { p: 'f' });
+  // 7 Confirm
+  node('payConf', 4, 3000, 'event', ['PaymentConfirmed'], { w: 178 });
+  node('confirmed', 2, 3000, 'step', ['Order CONFIRMED', 'payment PAID or', 'cash on delivery'], { strong: true });
+  node('done', 0, 3000, 'end', ['Booking confirmed', 'email + in-app message'], { w: 220, h: 84 });
+  // After the booking (strip)
+  var SY = 3250, FY = 3360;
+  node('s1', 0, SY, 'step', ['Store accepts', 'ACCEPTED'], { h: 81, color: 'order' });
+  node('s2', 1, SY, 'step', ['Store packs', 'PACKED'], { h: 81, color: 'order' });
+  node('s3', 2, SY, 'step', ['Ready for pickup', 'READY_FOR_PICKUP', 'partner assigned'], { color: 'order' });
+  node('s4', 3, SY, 'step', ['Partner picks up', 'OUT_FOR_DELIVERY', 'live map tracking'], { color: 'order' });
+  node('s5', 4, SY, 'step', ['Delivered', 'DELIVERED', 'COD cash collected'], { color: 'order', strong: true });
+  node('f1', 0, FY, 'fail', ['Store rejects', 'REJECTED, refund if paid'], { w: 220, p: 'f' });
+  node('f2', 2, FY, 'fail', ['Cancelled before pickup', 'refund if paid'], { w: 220, p: 'f' });
+  node('f3', 3, FY, 'fail', ['Delivery fails', 'DELIVERY_FAILED, refund'], { w: 220, p: 'f' });
+
+  /* ---------- layers ---------- */
+  var flow = document.getElementById('flow');
+  var bg = mk('g', {}, flow), edgeLayer = mk('g', {}, flow), nodeLayer = mk('g', {}, flow);
+
+  function pcls(p) {
+    var c = 'el';
+    for (var i = 0; i < (p || '').length; i++) c += ' p-' + p[i];
+    return c;
+  }
+
+  // lanes
+  LANES.forEach(function (L, i) {
+    mk('rect', { x: X0 + LW * i, y: LANE_TOP, width: LW, height: LANE_END - LANE_TOP, class: 'lanebg', style: 'fill: var(--' + L.key + '-fill)' }, bg);
+  });
+  for (var i = 0; i <= LANES.length; i++) {
+    var x = X0 + LW * i;
+    var sep = paint(gen.line(x, LANE_TOP, x, LANE_END, O({ stroke: 'var(--ink-soft)', strokeWidth: 1, roughness: 0.6, disableMultiStroke: true })), bg, '3 7');
+    sep.setAttribute('opacity', '0.55');
+  }
+  // phases in the gutter
+  PHASES.forEach(function (ph, i) {
+    var top = ph.y, bottom = i + 1 < PHASES.length ? PHASES[i + 1].y : LANE_END;
+    paint(gen.line(8, top, 1310, top, O({ stroke: 'var(--ink-soft)', strokeWidth: 1.1, roughness: 0.7, disableMultiStroke: true })), bg, '7 7');
+    paint(gen.circle(30, top + 28, 32, O({ stroke: 'var(--ink)', strokeWidth: 1.6, fill: 'var(--paper)', fillStyle: 'solid' })), bg);
+    var num = mk('text', { x: 30, y: top + 35, 'text-anchor': 'middle', class: 'ph-n' }, bg);
+    num.textContent = ph.n;
+    var mid = top + 50 + (bottom - top - 50) / 2;
+    var t = mk('text', { x: 30, y: mid, 'text-anchor': 'middle', 'dominant-baseline': 'central', class: 'ph-t', transform: 'rotate(-90 30 ' + mid + ')' }, bg);
+    t.textContent = ph.t;
+  });
+  paint(gen.line(8, LANE_END, 1310, LANE_END, O({ stroke: 'var(--ink-soft)', strokeWidth: 1.1, roughness: 0.7, disableMultiStroke: true })), bg, '7 7');
+
+  // strip frame + title
+  paint(gen.rectangle(X0, 3112, 1250, 304, O({ stroke: 'var(--ink-soft)', strokeWidth: 1.4, roughness: 1.4 })), bg);
+  var st = mk('text', { x: 84, y: 3152, class: 'strip-t' }, bg);
+  st.textContent = 'After the booking';
+  var ss = mk('text', { x: 84, y: 3178, class: 'strip-s' }, bg);
+  ss.textContent = 'The store gets a “New order” alert. From here the order moves on like this:';
+
+  /* ---------- edges ---------- */
+  function tag(parent, l) {
+    var a = { x: l.x, y: l.y, class: 'lbl ' + l.k + ' halo', 'text-anchor': l.a || 'middle' };
+    if (l.r) { a.transform = 'rotate(' + l.r + ' ' + l.x + ' ' + l.y + ')'; a['dominant-baseline'] = 'central'; }
+    var t = mk('text', a, parent);
+    if (l.c) t.style.fill = l.c;
+    t.textContent = l.t;
+  }
+  function arrowHead(a, b, stroke, g) {
+    var ang = Math.atan2(b[1] - a[1], b[0] - a[0]), L = 11, sp = 0.42;
+    var p1 = [b[0] - L * Math.cos(ang - sp), b[1] - L * Math.sin(ang - sp)];
+    var p2 = [b[0] - L * Math.cos(ang + sp), b[1] - L * Math.sin(ang + sp)];
+    paint(gen.linearPath([p1, b, p2], O({ stroke: stroke, strokeWidth: 1.8, roughness: 0.5, bowing: 0 })), g);
+  }
+  function edge(pts, o) {
+    o = o || {};
+    var g = mk('g', { class: pcls(o.p) }, edgeLayer);
+    var stroke = o.color || (o.kind === 'fail' ? 'var(--fail)' : 'var(--ink)');
+    paint(gen.linearPath(pts, O({ stroke: stroke, strokeWidth: o.width || 1.5, roughness: 0.85, bowing: 0.7, disableMultiStroke: !!o.dash })), g, o.dash);
+    if (o.arrow !== false) arrowHead(pts[pts.length - 2], pts[pts.length - 1], stroke, g);
+    (o.labels || []).forEach(function (l) { tag(g, l); });
+    if (o.dot) paint(gen.circle(o.dot[0], o.dot[1], 7, O({ stroke: stroke, fill: stroke, fillStyle: 'solid', roughness: 0.4 })), g);
+    return g;
+  }
+  function E(a, as, b, bs, o) {
+    o = o || {};
+    var A = anchor(a, as), B = anchor(b, bs), pts;
+    if (o.route === 'hv') pts = [A, [B[0], A[1]], B];
+    else if (o.route === 'vh') pts = [A, [A[0], B[1]], B];
+    else pts = [A, B];
+    if (o.p == null) o.p = N[a].p.split('').filter(function (c) { return N[b].p.indexOf(c) >= 0; }).join('');
+    return edge(pts, o);
+  }
+  function note(a, toPoint) {
+    edge([anchor(a, 'l'), toPoint], { arrow: false, dash: '2 6', color: 'var(--ink-soft)', p: '' });
+  }
+  var yes = function (x, y) { return { t: 'yes', x: x, y: y, k: 'yn', a: 'start' }; };
+  var no = function (x, y) { return { t: 'no', x: x, y: y, k: 'yn' }; };
+
+  // 1
+  E('start', 'b', 'browse', 't');
+  E('browse', 'b', 'pick', 't');
+  E('pick', 'b', 'add', 't');
+  E('add', 'r', 'check', 't', { route: 'hv' });
+  note('noteSearch', anchor('browse', 'r'));
+  note('noteAi', anchor('pick', 'r'));
+  // 2
+  E('check', 'b', 'same', 't');
+  E('same', 'l', 'replace', 'r', { labels: [no(310, 690)] });
+  E('replace', 't', 'check', 'l', { route: 'vh', p: 'f', labels: [{ t: 'replace the cart', x: 258, y: 569, k: 'tx' }] });
+  E('same', 'b', 'saved', 't', { labels: [yes(450, 774)] });
+  E('saved', 'l', 'review', 'r');
+  E('review', 'b', 'coupon', 'l', { route: 'vh', labels: [{ t: 'apply a code', x: 258, y: 924, k: 'tx' }] });
+  E('coupon', 'b', 'totals', 't');
+  // 3
+  E('totals', 'l', 'checkout', 't', { route: 'hv', labels: [{ t: 'ready to buy', x: 258, y: 1039, k: 'tx' }] });
+  E('checkout', 'r', 'summary', 'l');
+  E('summary', 'b', 'ready', 't');
+  E('ready', 'l', 'problems', 'r', { kind: 'fail', labels: [no(310, 1320)] });
+  edge([[80, 1330], [70, 1330], [70, 815], [80, 815]], { kind: 'fail', dash: '7 6', p: 'f',
+    labels: [{ t: 'back to the cart', x: 85, y: 975, k: 'tx', r: -90, c: 'var(--fail)' }] });
+  E('ready', 'b', 'place', 'r', { route: 'vh', labels: [yes(450, 1406)] });
+  // 4
+  E('place', 'b', 'post', 'l', { route: 'vh', labels: [{ t: 'order request', x: 435, y: 1549, k: 'tx' }] });
+  E('post', 'b', 'checks', 't');
+  note('noteChecks', anchor('checks', 'r'));
+  E('checks', 'b', 'checksOk', 't');
+  E('checksOk', 'l', 'refused', 'r', { kind: 'fail', labels: [no(560, 1795)] });
+  E('checksOk', 'b', 'pending', 't', { labels: [yes(700, 1877)] });
+  E('pending', 'l', 'orderPage', 'r', { labels: [{ t: '201 Created', x: 435, y: 1914, k: 'tx' }] });
+  // 5
+  E('pending', 'b', 'created', 't');
+  E('created', 'l', 'cartClean', 't', { route: 'hv', labels: [{ t: 'clean the cart', x: 520, y: 2054, k: 'tx' }] });
+  E('created', 'r', 'enough', 't', { route: 'hv', labels: [{ t: 'reserve', x: 850, y: 2054, k: 'tx' }] });
+  edge([[935, 2065], [1185, 2065], anchor('payPending', 't')], { p: 'co', dot: [935, 2065],
+    labels: [{ t: 'create payment', x: 1060, y: 2054, k: 'tx' }] });
+  E('enough', 'l', 'stockFail', 'r', { kind: 'fail', labels: [no(810, 2155)] });
+  E('enough', 'b', 'reserved', 't', { labels: [yes(950, 2244)] });
+  // 6
+  E('reserved', 'b', 'method', 'l', { route: 'vh', labels: [{ t: 'StockReserved', x: 1007, y: 2429, k: 'ev', c: 'var(--inv)' }] });
+  E('payPending', 'b', 'method', 't', { labels: [{ t: 'waits for stock', x: 1198, y: 2300, k: 'tx', a: 'start' }] });
+  edge([anchor('method', 'r'), [1334, 2440], [1334, 3000], anchor('payConf', 'r')], { p: 'c',
+    labels: [{ t: 'COD', x: 1312, y: 2429, k: 'yn' },
+             { t: 'cash on delivery: confirmed at once', x: 1351, y: 2720, k: 'tx', r: 90 }] });
+  E('method', 'b', 'awaiting', 't', { labels: [{ t: 'online', x: 1199, y: 2517, k: 'yn', a: 'start' }] });
+  E('awaiting', 'l', 'pay', 'r', { labels: [{ t: 'the order page shows Pay now', x: 685, y: 2559, k: 'tx' }] });
+  note('noteRetry', [290, 2598]);
+  E('pay', 'b', 'verify', 'l', { route: 'vh', labels: [{ t: 'payment id + signature', x: 685, y: 2694, k: 'tx' }] });
+  E('verify', 'b', 'paid', 't');
+  E('paid', 'l', 'cancelPay', 'r', { kind: 'fail', labels: [
+    { t: 'PaymentFailed', x: 935, y: 2829, k: 'ev', c: 'var(--fail)' },
+    { t: 'declined or too late', x: 935, y: 2862, k: 'tx' }] });
+  E('paid', 'b', 'payConf', 't', { labels: [{ t: 'yes: PAID', x: 1199, y: 2942, k: 'yn', a: 'start' }] });
+  // 7
+  E('payConf', 'l', 'confirmed', 'r');
+  E('confirmed', 'l', 'done', 'r', { labels: [
+    { t: 'OrderConfirmed', x: 437, y: 2989, k: 'ev', c: 'var(--order)' },
+    { t: 'notification-service', x: 437, y: 3021, k: 'tx' }] });
+  edge([anchor('confirmed', 'b'), [685, 3106]], { dash: '5 6', color: 'var(--ink-soft)', p: 'co',
+    labels: [{ t: 'then the store takes over', x: 700, y: 3070, k: 'tx', a: 'start' }] });
+  // strip
+  E('s1', 'r', 's2', 'l'); E('s2', 'r', 's3', 'l'); E('s3', 'r', 's4', 'l'); E('s4', 'r', 's5', 'l');
+  E('s1', 'b', 'f1', 't', { kind: 'fail', dash: '6 5' });
+  E('s3', 'b', 'f2', 't', { kind: 'fail', dash: '6 5' });
+  E('s4', 'b', 'f3', 't', { kind: 'fail', dash: '6 5' });
+
+  /* ---------- draw nodes ---------- */
+  function shape(n, g) {
+    var stroke = 'var(--' + n.color + ')', fill = 'var(--' + n.color + '-fill)';
+    var x = n.cx - n.w / 2, y = n.cy - n.h / 2;
+    if (n.type === 'start' || n.type === 'end') {
+      paint(gen.ellipse(n.cx, n.cy, n.w, n.h, O({ stroke: stroke, fill: fill, fillStyle: 'solid', strokeWidth: 2 })), g);
+      if (n.type === 'end') paint(gen.ellipse(n.cx, n.cy, n.w + 14, n.h + 12, O({ stroke: stroke, strokeWidth: 1.3, roughness: 1.3 })), g);
+    } else if (n.type === 'step') {
+      paint(gen.rectangle(x, y, n.w, n.h, O({ stroke: stroke, fill: fill, fillStyle: n.solid ? 'solid' : 'hachure',
+        strokeWidth: n.strong ? 2.7 : 1.7, hachureAngle: -41 })), g);
+    } else if (n.type === 'decision') {
+      paint(gen.polygon([[n.cx, y], [n.cx + n.w / 2, n.cy], [n.cx, y + n.h], [n.cx - n.w / 2, n.cy]],
+        O({ stroke: stroke, fill: fill, fillStyle: 'hachure', hachureAngle: 50, hachureGap: 6.5, strokeWidth: 1.8 })), g);
+    } else if (n.type === 'fail') {
+      paint(gen.rectangle(x, y, n.w, n.h, O({ stroke: 'var(--fail)', fill: 'var(--fail-fill)', fillStyle: 'hachure',
+        hachureAngle: 62, hachureGap: 6.5, strokeWidth: 1.7 })), g, '7 5');
+    } else if (n.type === 'event') {
+      paint(gen.path(pillPath(x, y, n.w, n.h), O({ stroke: 'var(--ink)', fill: 'var(--paper)', fillStyle: 'solid', strokeWidth: 1.6, roughness: 0.8 })), g);
+    } else if (n.type === 'note') {
+      g.setAttribute('transform', 'rotate(-1.4 ' + n.cx + ' ' + n.cy + ')');
+      paint(gen.rectangle(x, y, n.w, n.h, O({ stroke: 'var(--note-edge)', fill: 'var(--note)', fillStyle: 'solid', strokeWidth: 1.2, roughness: 1.4 })), g);
+    }
+  }
+  function words(n, g) {
+    var flat = n.type === 'start' || n.type === 'end' || n.solid || n.type === 'note' || n.type === 'event';
+    var cls = n.type === 'note' ? 'nn' : n.type === 'event' ? 'evn' : 'nt';
+    var lh = n.type === 'note' ? 20 : 19;
+    var t = mk('text', { class: cls + (flat ? '' : ' halo'), 'text-anchor': 'middle' }, g);
+    if (n.type === 'event') t.style.fill = 'var(--' + n.color + ')';
+    var y0 = n.cy - (n.lines.length - 1) * lh / 2 + 5;
+    n.lines.forEach(function (line, i) {
+      var sp = mk('tspan', { x: n.cx, y: y0 + i * lh }, t);
+      if (cls === 'nt' && (i === 0 || n.type === 'decision')) sp.setAttribute('class', 'b');
+      sp.textContent = line;
+    });
+  }
+  Object.keys(N).forEach(function (id) {
+    var n = N[id];
+    var g = mk('g', { class: pcls(n.p) }, nodeLayer);
+    shape(n, g);
+    words(n, g);
+  });
+
+  /* ---------- sticky lane header ---------- */
+  var lb = document.getElementById('lanebar');
+  LANES.forEach(function (L, i) {
+    var cx = lx(i);
+    paint(gen.rectangle(cx - 113, 8, 226, 58, O({ stroke: 'var(--' + L.key + ')', fill: 'var(--' + L.key + '-fill)', fillStyle: 'hachure', hachureGap: 7, strokeWidth: 1.8 })), lb);
+    var t = mk('text', { x: cx, y: 36, 'text-anchor': 'middle', class: 'lane-t halo' }, lb);
+    t.style.fill = 'var(--' + L.key + ')';
+    t.textContent = L.name;
+    var s2 = mk('text', { x: cx, y: 56, 'text-anchor': 'middle', class: 'lane-s halo' }, lb);
+    s2.textContent = L.sub;
+  });
+
+  /* ---------- legend ---------- */
+  document.querySelectorAll('.legend svg').forEach(function (svg) {
+    var k = svg.getAttribute('data-shape');
+    if (k === 'start') paint(gen.ellipse(20, 13, 34, 20, O({ stroke: 'var(--cust)', fill: 'var(--cust-fill)', fillStyle: 'solid', strokeWidth: 1.5 })), svg);
+    if (k === 'step') paint(gen.rectangle(3, 4, 34, 18, O({ stroke: 'var(--order)', fill: 'var(--order-fill)', fillStyle: 'hachure', hachureGap: 4, strokeWidth: 1.5 })), svg);
+    if (k === 'decision') paint(gen.polygon([[20, 1], [38, 13], [20, 25], [2, 13]], O({ stroke: 'var(--pay)', fill: 'var(--pay-fill)', fillStyle: 'hachure', hachureGap: 4, strokeWidth: 1.5 })), svg);
+    if (k === 'event') paint(gen.path(pillPath(2, 5, 36, 16), O({ stroke: 'var(--ink)', fill: 'var(--paper)', fillStyle: 'solid', strokeWidth: 1.4, roughness: 0.7 })), svg);
+    if (k === 'fail') paint(gen.rectangle(3, 4, 34, 18, O({ stroke: 'var(--fail)', fill: 'var(--fail-fill)', fillStyle: 'hachure', hachureGap: 4, strokeWidth: 1.5 })), svg, '4 3');
+    if (k === 'note') paint(gen.rectangle(5, 3, 30, 20, O({ stroke: 'var(--note-edge)', fill: 'var(--note)', fillStyle: 'solid', strokeWidth: 1.1, roughness: 1.3 })), svg);
+  });
+
+  /* ---------- path filter ---------- */
+  var CAPTIONS = {
+    all: '<strong>The whole flow.</strong> Pick a path above to follow one route through it.',
+    c: '<strong>Cash on delivery.</strong> As soon as the stock is reserved, the payment is accepted as CASH_ON_DELIVERY and the order is CONFIRMED. The partner collects the cash at the door.',
+    o: '<strong>Online payment.</strong> Once the stock is reserved, the customer has 15 minutes to pay with Razorpay. A verified signature (or Razorpay’s webhook) marks it PAID and the order is CONFIRMED.',
+    f: '<strong>When it goes wrong.</strong> Every point where the order stops, and what is undone: reserved stock is released, the coupon use is freed, and a paid order is refunded.'
+  };
+  var buttons = document.querySelectorAll('.paths button');
+  function choose(path) {
+    if (path === 'all') flow.removeAttribute('data-path'); else flow.setAttribute('data-path', path);
+    buttons.forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-path') === path)); });
+    caption.innerHTML = CAPTIONS[path];
+  }
+  buttons.forEach(function (b) { b.addEventListener('click', function () { choose(b.getAttribute('data-path')); }); });
+  choose('all');
+})();
+</script>
+
+</body></html>
