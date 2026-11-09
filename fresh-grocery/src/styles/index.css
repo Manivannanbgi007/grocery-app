@@ -609,3 +609,32 @@ html:has(#shop-header) {
 .bg-card:is(.rounded-2xl, .rounded-3xl):not(.absolute, .fixed, [role="dialog"], [role="alertdialog"], [role="listbox"], [role="menu"]) {
   background-color: var(--color-glass);
 }
+
+/*
+ * Product cards (components/product/ProductCard.tsx): with a mouse, the compare button ("card-reveal") appears when the
+ * card is hovered or holds the keyboard focus, and stays once the product is chosen. Touch screens cannot hover, so
+ * there it is always shown. It slides in only when motion is welcome.
+ *
+ * Outside every @layer, like the rule above, so it wins over the button's own transition-colors utility.
+ */
+@media (hover: hover) {
+  .card-reveal {
+    opacity: 0;
+    transition-property: color, background-color, border-color, opacity, translate;
+    transition-duration: 200ms;
+    transition-timing-function: ease-out;
+  }
+  .group:is(:hover, :focus-within) .card-reveal,
+  .card-reveal[aria-pressed="true"] {
+    opacity: 1;
+  }
+}
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .card-reveal {
+    translate: 0.5rem 0;
+  }
+  .group:is(:hover, :focus-within) .card-reveal,
+  .card-reveal[aria-pressed="true"] {
+    translate: 0 0;
+  }
+}

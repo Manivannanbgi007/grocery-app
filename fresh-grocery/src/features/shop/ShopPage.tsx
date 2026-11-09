@@ -107,7 +107,7 @@ export function ShopPage() {
                 isPending={isPending}
                 skeletonCount={SHOP_PAGE_SIZE}
                 isUpdating={isPlaceholderData}
-                className="lg:grid-cols-3 xl:grid-cols-4"
+                className="lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5"
               />
             )}
 

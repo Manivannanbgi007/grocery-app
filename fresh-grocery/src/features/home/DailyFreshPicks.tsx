@@ -65,7 +65,8 @@ export function DailyFreshPicks() {
           ) : !isPending && products.length === 0 ? (
             <EmptyState icon="🧺" title="Nothing in stock here right now" />
           ) : (
-            <ul ref={rowRef} className={cn('scrollbar-none flex snap-x gap-5 overflow-x-auto pb-2 transition-opacity', isPlaceholderData && 'opacity-50')}>
+            // pt-1.5 (taken back by -mt-1.5): room for a card's hover lift, which the sideways scrolling would cut off
+            <ul ref={rowRef} className={cn('scrollbar-none -mt-1.5 flex snap-x gap-5 overflow-x-auto pt-1.5 pb-2 transition-opacity', isPlaceholderData && 'opacity-50')}>
               {isPending
                 ? Array.from({ length: 4 }, (_, index) => (
                     <li key={index} className="w-60 shrink-0">

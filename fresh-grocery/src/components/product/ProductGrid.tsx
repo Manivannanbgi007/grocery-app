@@ -31,8 +31,9 @@ export function ProductGrid({ products, isPending, skeletonCount = 10, isUpdatin
               <ProductCardSkeleton size={cardSize} />
             </li>
           ))
-        : products?.map((product) => (
-            <li key={product.id}>
+        : products?.map((product, index) => (
+            // The cards rise in one after another; the stagger stops growing after 12, so a long page never waits
+            <li key={product.id} className="motion-safe:animate-rise" style={{ animationDelay: `${Math.min(index, 11) * 40}ms` }}>
               <ProductCard product={product} size={cardSize} />
             </li>
           ))}

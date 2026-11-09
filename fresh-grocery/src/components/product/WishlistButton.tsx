@@ -20,7 +20,8 @@ interface WishlistButtonProps {
 export function WishlistButton({ product, variant = 'icon', className }: WishlistButtonProps) {
   const wishlist = useWishlist()
   const saved = wishlist.isInWishlist(product.id)
-  const heart = <Heart className={cn('size-4', saved ? 'fill-hot text-hot' : 'text-heading')} aria-hidden="true" />
+  // A saved heart pops in with a small bounce (motion-safe)
+  const heart = <Heart className={cn('size-4', saved ? 'fill-hot text-hot motion-safe:animate-pop' : 'text-heading')} aria-hidden="true" />
 
   function handleClick() {
     const added = wishlist.toggle(product)
