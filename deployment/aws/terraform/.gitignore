@@ -1,0 +1,23 @@
+# Terraform's working folder (downloaded providers and modules)
+.terraform/
+
+# State files: they contain generated passwords. Keep them out of git (use the S3 backend for teams).
+*.tfstate
+*.tfstate.*
+
+# Saved plans can contain secrets too
+*.tfplan
+tfplan
+
+# Crash logs and local overrides
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Your own secret values, if you keep them in a file (see README.md, "Secrets")
+secrets.auto.tfvars
+
+# Keep .terraform.lock.hcl: it pins the provider versions for everyone.
